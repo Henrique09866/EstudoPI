@@ -9,11 +9,18 @@ class StudyTimerController {
     DateTime Function()? now,
     this.pomodoroDuration = const Duration(minutes: 25),
     this.breakDuration = const Duration(minutes: 5),
-  }) : _now = now ?? DateTime.now;
+    this.longBreakDuration = const Duration(minutes: 15),
+    this.autoStartBreak = false,
+    this.focusSessionsBeforeLongBreak = 4,
+  }) : assert(focusSessionsBeforeLongBreak > 0),
+       _now = now ?? DateTime.now;
 
   final DateTime Function() _now;
   final Duration pomodoroDuration;
   final Duration breakDuration;
+  final Duration longBreakDuration;
+  final bool autoStartBreak;
+  final int focusSessionsBeforeLongBreak;
 
   StudySessionType type = StudySessionType.pomodoro;
   StudyTimerPhase phase = StudyTimerPhase.focus;
@@ -21,9 +28,12 @@ class StudyTimerController {
   DateTime? _sessionStartedAt;
   DateTime? _runningSince;
   Duration _elapsedBeforePause = Duration.zero;
+  var _completedFocusSessions = 0;
+  var _isLongBreak = false;
 
   bool get hasActiveStudySession => _sessionStartedAt != null;
   DateTime? get sessionStartedAt => _sessionStartedAt;
+  bool get isLongBreak => _isLongBreak;
 
   Duration get elapsed => _elapsedBeforePause + _runningElapsed;
 
@@ -35,9 +45,18 @@ class StudyTimerController {
     if (type == StudySessionType.freeTimer) return elapsed;
     final limit = phase == StudyTimerPhase.focus
         ? pomodoroDuration
-        : breakDuration;
+        : _currentBreakDuration;
     final remaining = limit - elapsed;
     return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  /// Horário previsto para o alarme da etapa atual do Pomodoro.
+  ///
+  /// O cronômetro livre não possui um fim definido, portanto não programa
+  /// alarme nesse modo.
+  DateTime? get alarmAt {
+    if (!isRunning || type != StudySessionType.pomodoro) return null;
+    return _now().add(displayedDuration);
   }
 
   void selectType(StudySessionType newType) {
@@ -69,18 +88,22 @@ class StudyTimerController {
     }
     final limit = phase == StudyTimerPhase.focus
         ? pomodoroDuration
-        : breakDuration;
+        : _currentBreakDuration;
     if (elapsed < limit) return StudyTimerEvent.none;
 
     _elapsedBeforePause = limit;
     _runningSince = null;
     isRunning = false;
     if (phase == StudyTimerPhase.focus) {
+      _completedFocusSessions++;
+      _isLongBreak =
+          _completedFocusSessions % focusSessionsBeforeLongBreak == 0;
       phase = StudyTimerPhase.breakTime;
       return StudyTimerEvent.focusCompleted;
     }
     phase = StudyTimerPhase.focus;
     _elapsedBeforePause = Duration.zero;
+    _isLongBreak = false;
     return StudyTimerEvent.breakCompleted;
   }
 
@@ -105,6 +128,10 @@ class StudyTimerController {
     );
     _sessionStartedAt = null;
     _elapsedBeforePause = Duration.zero;
+    if (autoStartBreak) {
+      _runningSince = _now();
+      isRunning = true;
+    }
     return result;
   }
 
@@ -114,6 +141,7 @@ class StudyTimerController {
     _runningSince = null;
     _elapsedBeforePause = Duration.zero;
     phase = StudyTimerPhase.focus;
+    _isLongBreak = false;
   }
 
   void discardActiveStudy() => _resetFocus();
@@ -124,7 +152,11 @@ class StudyTimerController {
     _elapsedBeforePause = Duration.zero;
     _sessionStartedAt = null;
     phase = StudyTimerPhase.focus;
+    _isLongBreak = false;
   }
+
+  Duration get _currentBreakDuration =>
+      _isLongBreak ? longBreakDuration : breakDuration;
 }
 
 class StudyTimerResult {

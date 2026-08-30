@@ -17,8 +17,10 @@ void main() {
 
   test('Pomodoro inicia em 25 minutos e alterna para pausa ao concluir', () {
     expect(controller.displayedDuration, const Duration(minutes: 25));
+    expect(controller.alarmAt, isNull);
 
     controller.startOrResume();
+    expect(controller.alarmAt, DateTime(2026, 8, 21, 20, 25));
     now = now.add(const Duration(minutes: 25));
 
     expect(controller.tick(), StudyTimerEvent.focusCompleted);
@@ -36,6 +38,7 @@ void main() {
   test('pausa e continuação não contam tempo parado no cronômetro livre', () {
     controller.selectType(StudySessionType.freeTimer);
     controller.startOrResume();
+    expect(controller.alarmAt, isNull);
     now = now.add(const Duration(minutes: 10));
     controller.pause();
     now = now.add(const Duration(minutes: 5));
@@ -62,4 +65,30 @@ void main() {
     expect(controller.elapsed, Duration.zero);
     expect(controller.hasActiveStudySession, isFalse);
   });
+
+  test(
+    'usa pausa longa e inicia a pausa automaticamente quando configurado',
+    () {
+      final longBreakController = StudyTimerController(
+        now: () => now,
+        pomodoroDuration: const Duration(minutes: 25),
+        breakDuration: const Duration(minutes: 5),
+        longBreakDuration: const Duration(minutes: 20),
+        focusSessionsBeforeLongBreak: 1,
+        autoStartBreak: true,
+      );
+
+      longBreakController.startOrResume();
+      now = now.add(const Duration(minutes: 25));
+      expect(longBreakController.tick(), StudyTimerEvent.focusCompleted);
+      longBreakController.completeFocus();
+
+      expect(longBreakController.isLongBreak, isTrue);
+      expect(
+        longBreakController.displayedDuration,
+        const Duration(minutes: 20),
+      );
+      expect(longBreakController.isRunning, isTrue);
+    },
+  );
 }

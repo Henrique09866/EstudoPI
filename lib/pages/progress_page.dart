@@ -112,6 +112,8 @@ class _ProgressPageState extends State<ProgressPage> {
                         const SizedBox(height: 20),
                         _ProgressMetrics(summary: summary),
                         const SizedBox(height: 20),
+                        _TaskActivityChart(summary: summary),
+                        const SizedBox(height: 20),
                         _CompletionCard(summary: summary),
                         if (summary.hasData) ...[
                           if (summary.studyDays > 0) ...[
@@ -172,6 +174,12 @@ class _ProgressMetrics extends StatelessWidget {
         icon: Icons.error_outline_rounded,
         color: colorScheme.error,
       ),
+      _MetricData(
+        label: 'Concluídas com atraso',
+        value: '${summary.completedLateTasks}',
+        icon: Icons.event_available_outlined,
+        color: colorScheme.secondary,
+      ),
     ];
 
     return LayoutBuilder(
@@ -189,6 +197,154 @@ class _ProgressMetrics extends StatelessWidget {
       },
     );
   }
+}
+
+class _TaskActivityChart extends StatelessWidget {
+  const _TaskActivityChart({required this.summary});
+
+  final ProgressSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final items = [
+      _TaskActivityData(
+        label: 'Tarefas\nconcluídas',
+        value: summary.completedOnTimeTasks,
+        color: colorScheme.tertiary,
+      ),
+      _TaskActivityData(
+        label: 'Tarefas\natrasadas',
+        value: summary.overdueTasks,
+        color: colorScheme.error,
+      ),
+      _TaskActivityData(
+        label: 'Concluídas\ncom atraso',
+        value: summary.completedLateTasks,
+        color: colorScheme.secondary,
+      ),
+    ];
+    final largestValue = items.fold<int>(
+      0,
+      (largest, item) => item.value > largest ? item.value : largest,
+    );
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Atividades',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Tarefas concluídas, atrasadas e concluídas com atraso no período.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 190,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final item in items)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: _TaskActivityBar(
+                          item: item,
+                          largestValue: largestValue,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TaskActivityBar extends StatelessWidget {
+  const _TaskActivityBar({required this.item, required this.largestValue});
+
+  final _TaskActivityData item;
+  final int largestValue;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: '${item.label.replaceAll('\n', ' ')}: ${item.value}',
+    child: Column(
+      children: [
+        Text(
+          '${item.value}',
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final fraction = largestValue == 0
+                  ? 0.0
+                  : item.value / largestValue;
+              final height = item.value == 0
+                  ? 4.0
+                  : (constraints.maxHeight * fraction)
+                        .clamp(8.0, constraints.maxHeight)
+                        .toDouble();
+              return Align(
+                alignment: Alignment.bottomCenter,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  height: height,
+                  width: 34,
+                  decoration: BoxDecoration(
+                    color: item.color,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(8),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          item.label,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _TaskActivityData {
+  const _TaskActivityData({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final String label;
+  final int value;
+  final Color color;
 }
 
 class _MetricCard extends StatelessWidget {

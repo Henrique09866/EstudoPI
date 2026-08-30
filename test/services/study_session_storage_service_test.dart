@@ -2,7 +2,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:taskflow/models/study_cycle_subject.dart';
+import 'package:taskflow/models/study_revision.dart';
 import 'package:taskflow/models/study_session.dart';
+import 'package:taskflow/models/study_weekly_goal.dart';
 import 'package:taskflow/services/study_session_storage_service.dart';
 
 void main() {
@@ -70,5 +73,67 @@ void main() {
 
     await storage.saveDailyGoalMinutes(90);
     expect(await storage.getDailyGoalMinutes(), 90);
+  });
+
+  test(
+    'persiste metas semanais e substitui a mesma matéria no objetivo',
+    () async {
+      final firstGoal = StudyWeeklyGoal(
+        studyPlan: 'ENEM',
+        subject: 'Matemática',
+        targetMinutes: 180,
+      );
+      final updatedGoal = StudyWeeklyGoal(
+        studyPlan: 'ENEM',
+        subject: 'matemática',
+        targetMinutes: 240,
+      );
+
+      await storage.saveWeeklyGoal(firstGoal);
+      await storage.saveWeeklyGoal(updatedGoal);
+
+      expect(await storage.getWeeklyGoals(), [updatedGoal]);
+
+      await storage.deleteWeeklyGoal(updatedGoal.id);
+      expect(await storage.getWeeklyGoals(), isEmpty);
+    },
+  );
+
+  test('persiste revisões e permite concluir uma revisão', () async {
+    final revision = StudyRevision(
+      id: 'revision-physics',
+      subject: 'Física',
+      studyPlan: 'ENEM',
+      scheduledFor: DateTime(2026, 8, 22),
+    );
+    await storage.saveRevision(revision);
+
+    expect(await storage.getRevisions(), [revision]);
+
+    final completed = revision.copyWith(completedAt: DateTime(2026, 8, 22, 12));
+    await storage.saveRevision(completed);
+    expect(await storage.getRevisions(), [completed]);
+  });
+
+  test('persiste o ciclo e apaga marcações ao remover uma matéria', () async {
+    const subject = StudyCycleSubject(
+      id: 'cycle-math',
+      name: 'Matemática',
+      colorIndex: 0,
+    );
+    final checkIn = StudyCycleCheckIn(
+      subjectId: subject.id,
+      day: DateTime(2026, 8, 24),
+    );
+
+    await storage.saveCycleSubject(subject);
+    await storage.saveCycleCheckIn(checkIn);
+
+    expect(await storage.getCycleSubjects(), [subject]);
+    expect((await storage.getCycleCheckIns()).single.id, checkIn.id);
+
+    await storage.deleteCycleSubject(subject.id);
+    expect(await storage.getCycleSubjects(), isEmpty);
+    expect(await storage.getCycleCheckIns(), isEmpty);
   });
 }

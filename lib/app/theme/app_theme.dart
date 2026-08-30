@@ -10,6 +10,47 @@ class AppTheme {
   static ThemeData get light => lightTheme;
   static ThemeData get dark => darkTheme;
 
+  static ThemeData withAccessibility(
+    ThemeData theme, {
+    required bool highContrast,
+    required bool reduceBrightness,
+  }) {
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final adjustedScheme = scheme.copyWith(
+      surface: reduceBrightness && isDark ? const Color(0xFF090E18) : null,
+      surfaceContainerLow: reduceBrightness && isDark
+          ? const Color(0xFF101927)
+          : null,
+      surfaceContainer: reduceBrightness && isDark
+          ? const Color(0xFF162131)
+          : null,
+      onSurface: highContrast ? (isDark ? Colors.white : Colors.black) : null,
+      onSurfaceVariant: highContrast
+          ? (isDark ? const Color(0xFFF0F3F8) : const Color(0xFF17191D))
+          : null,
+      outline: highContrast ? (isDark ? Colors.white : Colors.black) : null,
+      outlineVariant: highContrast
+          ? (isDark ? const Color(0xFFBEC6D4) : const Color(0xFF30343B))
+          : null,
+    );
+    return theme.copyWith(
+      colorScheme: adjustedScheme,
+      scaffoldBackgroundColor: adjustedScheme.surface,
+      dividerTheme: DividerThemeData(color: adjustedScheme.outlineVariant),
+      cardTheme: theme.cardTheme.copyWith(
+        color: adjustedScheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(
+            color: adjustedScheme.outlineVariant,
+            width: highContrast ? 1.5 : 1,
+          ),
+        ),
+      ),
+    );
+  }
+
   static ThemeData _buildLight() {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: const Color(0xFF155EEF),

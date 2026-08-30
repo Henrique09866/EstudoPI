@@ -1,5 +1,4 @@
-# Assets do Estudo Pi
+# Assets do Curujão Estudos
 
-Adicione a logo oficial em `assets/images/logo.png` quando ela estiver
-disponível. O diretório já está declarado no `pubspec.yaml`; nenhum logotipo
-provisório foi criado para preservar a identidade oficial.
+`logo.png` é a marca principal do aplicativo: uma coruja 2D em clima noturno,
+com um livro aberto. O diretório já está declarado no `pubspec.yaml`.

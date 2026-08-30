@@ -9,12 +9,14 @@ class TaskCard extends StatelessWidget {
     required this.onChanged,
     required this.onEdit,
     required this.onDelete,
+    this.onReschedule,
   });
 
   final Task task;
   final ValueChanged<bool> onChanged;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback? onReschedule;
 
   @override
   Widget build(BuildContext context) {
@@ -140,10 +142,23 @@ class TaskCard extends StatelessWidget {
                     onEdit();
                     return;
                   }
+                  if (action == _TaskAction.reschedule) {
+                    onReschedule?.call();
+                    return;
+                  }
                   onDelete();
                 },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
+                itemBuilder: (context) => [
+                  if (isOverdue && onReschedule != null)
+                    const PopupMenuItem(
+                      value: _TaskAction.reschedule,
+                      child: ListTile(
+                        leading: Icon(Icons.event_repeat_outlined),
+                        title: Text('Reagendar para amanhã'),
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                    ),
+                  const PopupMenuItem(
                     value: _TaskAction.edit,
                     child: ListTile(
                       leading: Icon(Icons.edit_outlined),
@@ -183,7 +198,7 @@ class TaskCard extends StatelessWidget {
   }
 }
 
-enum _TaskAction { edit, delete }
+enum _TaskAction { reschedule, edit, delete }
 
 class _TaskBadge extends StatelessWidget {
   const _TaskBadge({

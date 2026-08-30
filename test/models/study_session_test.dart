@@ -5,9 +5,15 @@ void main() {
   final startedAt = DateTime(2026, 8, 21, 20);
   final endedAt = DateTime(2026, 8, 21, 20, 25);
 
-  StudySession createSession({String? subject}) => StudySession(
+  StudySession createSession({
+    String? subject,
+    String? studyPlan,
+    String? notes,
+  }) => StudySession(
     id: 'study-1',
     subject: subject,
+    studyPlan: studyPlan,
+    notes: notes,
     startedAt: startedAt,
     endedAt: endedAt,
     duration: const Duration(minutes: 25),
@@ -23,7 +29,11 @@ void main() {
   });
 
   test('serializa e desserializa sessão', () {
-    final session = createSession(subject: 'Física');
+    final session = createSession(
+      subject: 'Física',
+      studyPlan: 'ENEM',
+      notes: 'Resolver exercícios.',
+    );
 
     expect(StudySession.fromMap(session.toMap()), session);
   });
@@ -37,6 +47,18 @@ void main() {
       createSession(subject: 'Física'),
       isNot(createSession(subject: 'Química')),
     );
+  });
+
+  test('sessões antigas sem objetivo continuam válidas', () {
+    final map = createSession(subject: 'Física').toMap()..remove('studyPlan');
+
+    expect(StudySession.fromMap(map).studyPlan, isNull);
+  });
+
+  test('sessões antigas sem nota continuam válidas', () {
+    final map = createSession(subject: 'Física').toMap()..remove('notes');
+
+    expect(StudySession.fromMap(map).notes, isNull);
   });
 
   test('dados inválidos são rejeitados com segurança', () {

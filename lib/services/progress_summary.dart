@@ -23,6 +23,8 @@ class ProgressSummary {
     required this.period,
     required this.studyDuration,
     required this.completedTasks,
+    required this.completedOnTimeTasks,
+    required this.completedLateTasks,
     required this.pendingTasks,
     required this.overdueTasks,
     required this.relevantTasks,
@@ -33,6 +35,8 @@ class ProgressSummary {
   final ProgressPeriod period;
   final Duration studyDuration;
   final int completedTasks;
+  final int completedOnTimeTasks;
+  final int completedLateTasks;
   final int pendingTasks;
   final int overdueTasks;
   final int relevantTasks;
@@ -97,6 +101,12 @@ class ProgressSummaryService {
           task.completedAt != null &&
           range.contains(task.completedAt!),
     );
+    final completedOnTime = completed.where(
+      (task) => !task.completedAt!.isAfter(task.dateTime),
+    );
+    final completedLate = completed.where(
+      (task) => task.completedAt!.isAfter(task.dateTime),
+    );
     final pending = taskList.where(
       (task) => task.isPending && range.contains(task.dateTime),
     );
@@ -126,6 +136,8 @@ class ProgressSummaryService {
       period: period,
       studyDuration: studyDuration,
       completedTasks: completed.length,
+      completedOnTimeTasks: completedOnTime.length,
+      completedLateTasks: completedLate.length,
       pendingTasks: pending.length,
       overdueTasks: overdue.length,
       relevantTasks: relevant.length,

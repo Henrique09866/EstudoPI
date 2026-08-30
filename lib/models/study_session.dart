@@ -4,6 +4,8 @@ class StudySession {
   StudySession({
     required this.id,
     this.subject,
+    this.studyPlan,
+    this.notes,
     required this.startedAt,
     required this.endedAt,
     required this.duration,
@@ -13,6 +15,13 @@ class StudySession {
 
   final String id;
   final String? subject;
+
+  /// Prova, concurso ou objetivo ao qual a sessão pertence.
+  ///
+  /// `null` representa uma sessão geral e também mantém compatibilidade com
+  /// as sessões salvas antes da criação da Área de estudos.
+  final String? studyPlan;
+  final String? notes;
   final DateTime startedAt;
   final DateTime endedAt;
   final Duration duration;
@@ -21,6 +30,8 @@ class StudySession {
   Map<String, dynamic> toMap() => {
     'id': id,
     'subject': subject,
+    'studyPlan': studyPlan,
+    'notes': notes,
     'startedAt': startedAt.toIso8601String(),
     'endedAt': endedAt.toIso8601String(),
     'durationSeconds': duration.inSeconds,
@@ -50,6 +61,8 @@ class StudySession {
     return StudySession(
       id: id,
       subject: _optionalSubject(map['subject']),
+      studyPlan: _optionalSubject(map['studyPlan']),
+      notes: _optionalNotes(map['notes']),
       startedAt: parsedStartedAt,
       endedAt: parsedEndedAt,
       duration: Duration(seconds: durationSeconds.toInt()),
@@ -60,6 +73,8 @@ class StudySession {
   StudySession copyWith({
     String? id,
     Object? subject = _sentinel,
+    Object? studyPlan = _sentinel,
+    Object? notes = _sentinel,
     DateTime? startedAt,
     DateTime? endedAt,
     Duration? duration,
@@ -67,6 +82,10 @@ class StudySession {
   }) => StudySession(
     id: id ?? this.id,
     subject: identical(subject, _sentinel) ? this.subject : subject as String?,
+    studyPlan: identical(studyPlan, _sentinel)
+        ? this.studyPlan
+        : studyPlan as String?,
+    notes: identical(notes, _sentinel) ? this.notes : notes as String?,
     startedAt: startedAt ?? this.startedAt,
     endedAt: endedAt ?? this.endedAt,
     duration: duration ?? this.duration,
@@ -80,6 +99,13 @@ class StudySession {
     if (value is! String) throw const FormatException('Matéria inválida.');
     final subject = value.trim();
     return subject.isEmpty ? null : subject;
+  }
+
+  static String? _optionalNotes(Object? value) {
+    if (value == null) return null;
+    if (value is! String) throw const FormatException('Nota inválida.');
+    final notes = value.trim();
+    return notes.isEmpty ? null : notes;
   }
 
   static StudySessionType _typeFromName(Object? value) {
@@ -97,12 +123,22 @@ class StudySession {
       other is StudySession &&
           id == other.id &&
           subject == other.subject &&
+          studyPlan == other.studyPlan &&
+          notes == other.notes &&
           startedAt == other.startedAt &&
           endedAt == other.endedAt &&
           duration == other.duration &&
           type == other.type;
 
   @override
-  int get hashCode =>
-      Object.hash(id, subject, startedAt, endedAt, duration, type);
+  int get hashCode => Object.hash(
+    id,
+    subject,
+    studyPlan,
+    notes,
+    startedAt,
+    endedAt,
+    duration,
+    type,
+  );
 }

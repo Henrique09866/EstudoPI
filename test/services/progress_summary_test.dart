@@ -139,6 +139,34 @@ void main() {
     ]);
   });
 
+  test('separa tarefas concluídas no prazo das concluídas com atraso', () {
+    final summary = service.calculate(
+      now: now,
+      period: ProgressPeriod.today,
+      tasks: [
+        task(
+          id: 'on-time',
+          dateTime: now.add(const Duration(hours: 1)),
+          isCompleted: true,
+          completedAt: now,
+        ),
+        task(
+          id: 'late-completion',
+          dateTime: now.subtract(const Duration(hours: 1)),
+          isCompleted: true,
+          completedAt: now,
+        ),
+        task(id: 'overdue', dateTime: now.subtract(const Duration(hours: 2))),
+      ],
+      sessions: const [],
+    );
+
+    expect(summary.completedTasks, 2);
+    expect(summary.completedOnTimeTasks, 1);
+    expect(summary.completedLateTasks, 1);
+    expect(summary.overdueTasks, 1);
+  });
+
   test(
     'lista vazia tem métricas seguras e duração acima de 24h é formatada',
     () {

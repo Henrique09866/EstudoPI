@@ -29,9 +29,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Estudo Pi'), findsOneWidget);
+    expect(find.text('Curujão Estudos'), findsOneWidget);
     expect(
-      Theme.of(tester.element(find.text('Estudo Pi'))).brightness,
+      Theme.of(tester.element(find.text('Curujão Estudos'))).brightness,
       Brightness.dark,
     );
   });
@@ -45,11 +45,11 @@ void main() {
     expect(find.text('Calendário'), findsOneWidget);
   });
 
-  testWidgets('dark mode renderiza o Modo Estudo', (tester) async {
+  testWidgets('dark mode renderiza a Área de estudos', (tester) async {
     await tester.pumpWidget(dark(StudyPage(storage: _StudyStorage())));
     await tester.pumpAndSettle();
 
-    expect(find.text('Modo Estudo'), findsOneWidget);
+    expect(find.text('Área de estudos'), findsOneWidget);
   });
 
   testWidgets('dark mode renderiza o dashboard', (tester) async {
@@ -78,7 +78,7 @@ void main() {
   });
 }
 
-class _StudyStorage implements StudySessionStorage {
+class _StudyStorage extends StudySessionStorage {
   @override
   Future<void> deleteSession(String id) async {}
 
@@ -122,7 +122,11 @@ class _Reminder implements DailyReminderScheduler {
   bool get canScheduleNotifications => true;
 
   @override
-  Future<void> cancelDailyPlanningReminder() async {}
+  Future<void> cancelDailyPlanningReminder({
+    int? hour,
+    int? minute,
+    int? weekday,
+  }) async {}
 
   @override
   Future<bool> requestPermission() async => true;
@@ -131,5 +135,6 @@ class _Reminder implements DailyReminderScheduler {
   Future<void> scheduleDailyPlanningReminder({
     required int hour,
     required int minute,
+    int? weekday,
   }) async {}
 }

@@ -112,7 +112,7 @@ void main() {
   testWidgets('Home carrega tarefas do serviço', (tester) async {
     await pumpLoadedHome(tester, storage: FakeTaskStorage(tasksFixture()));
 
-    expect(find.text('Estudo Pi'), findsOneWidget);
+    expect(find.text('Curujão Estudos'), findsOneWidget);
     expect(find.text('TaskFlow'), findsNothing);
     expect(find.text('Resumo de hoje'), findsOneWidget);
     expect(find.text('1 de 2 concluídas'), findsOneWidget);
@@ -595,7 +595,7 @@ void main() {
 
     await pumpLoadedHome(tester, storage: FakeTaskStorage(tasksFixture()));
 
-    expect(find.text('Estudo Pi'), findsOneWidget);
+    expect(find.text('Curujão Estudos'), findsOneWidget);
     expect(find.byKey(const ValueKey('new-task-button')), findsOneWidget);
   });
 
@@ -607,7 +607,7 @@ void main() {
 
     await pumpLoadedHome(tester, storage: FakeTaskStorage(tasksFixture()));
 
-    expect(find.text('Estudo Pi'), findsOneWidget);
+    expect(find.text('Curujão Estudos'), findsOneWidget);
     expect(find.text('Resumo de hoje'), findsOneWidget);
   });
 
@@ -768,6 +768,34 @@ void main() {
 
     expect(find.text('Lista atrasada'), findsOneWidget);
     expect(find.text('Hoje'), findsOneWidget);
+  });
+
+  testWidgets('reagenda tarefa atrasada para amanhã com um toque', (
+    tester,
+  ) async {
+    final overdueTask = taskFixture(
+      id: 'reschedule-overdue',
+      title: 'Tarefa para reagendar',
+      dateTime: DateTime.now().subtract(const Duration(days: 1)),
+    );
+    final storage = FakeTaskStorage([overdueTask]);
+    final notifications = FakeNotificationScheduler();
+    await pumpLoadedHome(
+      tester,
+      storage: storage,
+      notifications: notifications,
+    );
+
+    await openTaskActions(tester, overdueTask.id);
+    await tester.tap(find.text('Reagendar para amanhã'));
+    await tester.pumpAndSettle();
+
+    final updated = storage.tasks.single;
+    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    expect(updated.dateTime.day, tomorrow.day);
+    expect(updated.dateTime.month, tomorrow.month);
+    expect(updated.dateTime.year, tomorrow.year);
+    expect(find.text('Tarefa reagendada para amanhã.'), findsOneWidget);
   });
 
   testWidgets('limpar filtros restaura tarefas filtradas', (tester) async {

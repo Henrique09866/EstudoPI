@@ -10,6 +10,7 @@ import '../services/task_storage_service.dart';
 import '../services/study_session_storage.dart';
 import '../services/study_session_storage_service.dart';
 import '../services/study_session_summary.dart';
+import '../services/home_insights_service.dart';
 import '../services/app_settings_controller.dart';
 import '../widgets/task_card.dart';
 import '../widgets/task_filter_sheet.dart';
@@ -47,12 +48,14 @@ class _HomePageState extends State<HomePage> {
   late final StudySessionStorage? _studyStorage;
   final _searchController = TextEditingController();
   final _recurrenceService = TaskRecurrenceService();
+  final _insightsService = const HomeInsightsService();
   final _changingTaskIds = <String>{};
   late List<Task> _tasks;
   var _filters = const TaskFilters();
   var _isLoading = true;
   var _searchQuery = '';
   var _studyMinutesToday = 0;
+  List<StudySession> _sessions = const [];
   var _dailyStudyGoalMinutes =
       StudySessionStorageService.defaultDailyGoalMinutes;
 
@@ -63,9 +66,11 @@ class _HomePageState extends State<HomePage> {
     _notifications = widget.notifications ?? NotificationService.instance;
     _studyStorage = widget.studyStorage ?? _availableStudyStorage();
     _tasks = List.of(widget.initialTasks ?? const []);
+    widget.settingsController?.addListener(_onSettingsChanged);
 
     if (widget.initialTasks != null) {
       _isLoading = false;
+      _loadStudySummary();
       return;
     }
 
@@ -75,6 +80,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    widget.settingsController?.removeListener(_onSettingsChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -110,6 +116,7 @@ class _HomePageState extends State<HomePage> {
       );
       if (!mounted) return;
       setState(() {
+        _sessions = results[0] as List<StudySession>;
         _studyMinutesToday = duration.inMinutes;
         _dailyStudyGoalMinutes = results[1] as int;
       });
@@ -291,8 +298,12 @@ class _HomePageState extends State<HomePage> {
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            StudyPage(storage: _studyStorage, subjects: subjects),
+        builder: (context) => StudyPage(
+          storage: _studyStorage,
+          timerAlarms: NotificationService.instance,
+          settings: widget.settingsController?.settings,
+          subjects: subjects,
+        ),
       ),
     );
     if (mounted) await _loadStudySummary();
@@ -325,6 +336,42 @@ class _HomePageState extends State<HomePage> {
       _searchQuery = '';
       _filters = const TaskFilters();
     });
+  }
+
+  void _onSettingsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _rescheduleOverdueTask(Task task) async {
+    if (!task.isOverdue || _changingTaskIds.contains(task.id)) return;
+    _changingTaskIds.add(task.id);
+    final now = DateTime.now();
+    final rescheduled = task.copyWith(
+      dateTime: DateTime(
+        now.year,
+        now.month,
+        now.day + 1,
+        task.dateTime.hour,
+        task.dateTime.minute,
+      ),
+    );
+    try {
+      await _cancelNotification(task.id);
+      await _storage.updateTask(rescheduled);
+      await _scheduleNotification(rescheduled);
+      if (!mounted) return;
+      setState(() {
+        _tasks = [
+          for (final current in _tasks)
+            if (current.id == task.id) rescheduled else current,
+        ];
+      });
+      _showNotificationMessage('Tarefa reagendada para amanhã.');
+    } catch (_) {
+      _showStorageError('Não foi possível reagendar a tarefa.');
+    } finally {
+      _changingTaskIds.remove(task.id);
+    }
   }
 
   void _showStorageError(String message) {
@@ -405,6 +452,14 @@ class _HomePageState extends State<HomePage> {
         .where((task) => task.isPending && _isSameDay(task.dateTime, now))
         .length;
     final overdueCount = _tasks.where((task) => task.isOverdue).length;
+    final streak = _insightsService.studyStreak(_sessions, now: now);
+    final weeklySummary = _insightsService.weeklySummary(
+      sessions: _sessions,
+      tasks: _tasks,
+      now: now,
+    );
+    final todayPlan = _insightsService.planToday(_tasks, now: now);
+    final settings = widget.settingsController?.settings;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
@@ -445,10 +500,17 @@ class _HomePageState extends State<HomePage> {
                       onOpenSettings: _openSettings,
                       studyMinutesToday: _studyMinutesToday,
                       dailyStudyGoalMinutes: _dailyStudyGoalMinutes,
+                      showInsights: widget.settingsController != null,
+                      streak: streak,
+                      weeklySummary: weeklySummary,
+                      todayPlan: todayPlan,
+                      countdownTitle: settings?.countdownTitle,
+                      countdownDate: settings?.countdownDate,
                       onClearFilters: _clearFilters,
                       onTaskChanged: _toggleTaskCompletion,
                       onEditTask: _editTask,
                       onDeleteTask: _confirmDeleteTask,
+                      onRescheduleTask: _rescheduleOverdueTask,
                     ),
                   ),
                 ),
@@ -519,10 +581,17 @@ class _HomeContent extends StatelessWidget {
     required this.onOpenSettings,
     required this.studyMinutesToday,
     required this.dailyStudyGoalMinutes,
+    required this.showInsights,
+    required this.streak,
+    required this.weeklySummary,
+    required this.todayPlan,
+    required this.countdownTitle,
+    required this.countdownDate,
     required this.onClearFilters,
     required this.onTaskChanged,
     required this.onEditTask,
     required this.onDeleteTask,
+    required this.onRescheduleTask,
   });
 
   final bool allTasksAreEmpty;
@@ -544,10 +613,17 @@ class _HomeContent extends StatelessWidget {
   final VoidCallback onOpenSettings;
   final int studyMinutesToday;
   final int dailyStudyGoalMinutes;
+  final bool showInsights;
+  final int streak;
+  final WeeklyStudySummary weeklySummary;
+  final List<Task> todayPlan;
+  final String? countdownTitle;
+  final DateTime? countdownDate;
   final VoidCallback onClearFilters;
   final void Function(Task task, bool isCompleted) onTaskChanged;
   final ValueChanged<Task> onEditTask;
   final ValueChanged<Task> onDeleteTask;
+  final ValueChanged<Task> onRescheduleTask;
 
   @override
   Widget build(BuildContext context) {
@@ -565,18 +641,21 @@ class _HomeContent extends StatelessWidget {
                 color: colorScheme.primaryContainer,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Icon(
-                  Icons.auto_stories_rounded,
-                  color: colorScheme.onPrimaryContainer,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  width: 44,
+                  height: 44,
+                  fit: BoxFit.cover,
+                  semanticLabel: 'Logo do Curujão Estudos',
                 ),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Estudo Pi',
+                'Curujão Estudos',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleLarge?.copyWith(
@@ -626,11 +705,19 @@ class _HomeContent extends StatelessWidget {
           overdueCount: overdueCount,
           totalCount: totalToday,
         ),
-        const SizedBox(height: 16),
-        _StudyHomeSummary(
-          minutes: studyMinutesToday,
-          goalMinutes: dailyStudyGoalMinutes,
-          onPressed: onOpenStudy,
+        if (showInsights) ...[
+          const SizedBox(height: 16),
+          _TodayPlanCard(tasks: todayPlan),
+        ],
+        const SizedBox(height: 12),
+        _StudyRhythmCard(
+          streak: streak,
+          summary: weeklySummary,
+          countdownTitle: countdownTitle,
+          countdownDate: countdownDate,
+          studyMinutesToday: studyMinutesToday,
+          dailyStudyGoalMinutes: dailyStudyGoalMinutes,
+          onOpenStudy: onOpenStudy,
         ),
         const SizedBox(height: 20),
         TextField(
@@ -682,6 +769,7 @@ class _HomeContent extends StatelessWidget {
               onTaskChanged: onTaskChanged,
               onEditTask: onEditTask,
               onDeleteTask: onDeleteTask,
+              onRescheduleTask: onRescheduleTask,
             ),
           _TaskSection(
             title: 'Hoje',
@@ -693,6 +781,7 @@ class _HomeContent extends StatelessWidget {
             onTaskChanged: onTaskChanged,
             onEditTask: onEditTask,
             onDeleteTask: onDeleteTask,
+            onRescheduleTask: onRescheduleTask,
           ),
           _TaskSection(
             title: 'Próximas',
@@ -704,6 +793,7 @@ class _HomeContent extends StatelessWidget {
             onTaskChanged: onTaskChanged,
             onEditTask: onEditTask,
             onDeleteTask: onDeleteTask,
+            onRescheduleTask: onRescheduleTask,
           ),
           _TaskSection(
             title: 'Concluídas',
@@ -715,6 +805,7 @@ class _HomeContent extends StatelessWidget {
             onTaskChanged: onTaskChanged,
             onEditTask: onEditTask,
             onDeleteTask: onDeleteTask,
+            onRescheduleTask: onRescheduleTask,
           ),
         ],
       ],
@@ -729,78 +820,233 @@ class _HomeContent extends StatelessWidget {
   }
 }
 
-class _StudyHomeSummary extends StatelessWidget {
-  const _StudyHomeSummary({
-    required this.minutes,
-    required this.goalMinutes,
-    required this.onPressed,
+class _StudyRhythmCard extends StatelessWidget {
+  const _StudyRhythmCard({
+    required this.streak,
+    required this.summary,
+    required this.countdownTitle,
+    required this.countdownDate,
+    required this.studyMinutesToday,
+    required this.dailyStudyGoalMinutes,
+    required this.onOpenStudy,
   });
 
-  final int minutes;
-  final int goalMinutes;
-  final VoidCallback onPressed;
+  final int streak;
+  final WeeklyStudySummary summary;
+  final String? countdownTitle;
+  final DateTime? countdownDate;
+  final int studyMinutesToday;
+  final int dailyStudyGoalMinutes;
+  final VoidCallback onOpenStudy;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final progress = goalMinutes == 0
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final studyProgress = dailyStudyGoalMinutes == 0
         ? 0.0
-        : (minutes / goalMinutes).clamp(0.0, 1.0);
+        : (studyMinutesToday / dailyStudyGoalMinutes).clamp(0.0, 1.0);
+    final subjects = summary.subjects.take(2).toList();
+    final subjectsLabel = subjects.isEmpty
+        ? 'Nenhuma matéria registrada nesta semana.'
+        : subjects
+              .map(
+                (subject) =>
+                    '${subject.subject} (${_formatStudyDuration(subject.duration)})',
+              )
+              .join(' · ');
+    final countdownLabel = _countdownLabel(countdownDate);
+
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final details = Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Estudo hoje',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text('$minutes min / $goalMinutes min'),
-                const SizedBox(height: 7),
-                LinearProgressIndicator(value: progress, minHeight: 6),
-              ],
-            );
-            final button = TextButton(
-              key: const ValueKey('start-study-from-home-button'),
-              onPressed: onPressed,
-              child: const Text('Iniciar estudo'),
-            );
-            if (constraints.maxWidth < 340) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.timer_outlined, color: colorScheme.primary),
-                      const SizedBox(width: 12),
-                      Expanded(child: details),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  button,
-                ],
-              );
-            }
-            return Row(
-              children: [
-                Icon(Icons.timer_outlined, color: colorScheme.primary),
-                const SizedBox(width: 12),
-                Expanded(child: details),
-                const SizedBox(width: 12),
-                button,
-              ],
-            );
-          },
+      child: ExpansionTile(
+        key: const ValueKey('study-rhythm-card'),
+        leading: Icon(Icons.nights_stay_outlined, color: colorScheme.primary),
+        title: Text(
+          'Seu ritmo',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
         ),
+        subtitle: const Text('Sequência, semana e meta de estudo'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton.icon(
+              key: const ValueKey('start-study-from-home-button'),
+              onPressed: onOpenStudy,
+              icon: const Icon(Icons.timer_outlined, size: 18),
+              label: const Text('Estudar'),
+            ),
+            const Icon(Icons.expand_more_rounded),
+          ],
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          const Divider(),
+          _RhythmDetail(
+            icon: Icons.local_fire_department_outlined,
+            label: 'Sequência',
+            value: streak == 0
+                ? 'Estude hoje para iniciar.'
+                : streak == 1
+                ? '1 noite seguida'
+                : '$streak noites seguidas',
+            color: colorScheme.tertiary,
+          ),
+          const SizedBox(height: 14),
+          _RhythmDetail(
+            icon: Icons.date_range_outlined,
+            label: 'Últimos 7 dias',
+            value:
+                '${_formatStudyDuration(summary.duration)} estudados\n$subjectsLabel',
+          ),
+          const SizedBox(height: 14),
+          _RhythmDetail(
+            icon: summary.overdueTasks == 0
+                ? Icons.task_alt_outlined
+                : Icons.warning_amber_rounded,
+            label: 'Tarefas atrasadas',
+            value: '${summary.overdueTasks}',
+            color: summary.overdueTasks == 0
+                ? colorScheme.tertiary
+                : colorScheme.error,
+          ),
+          if (countdownDate != null) ...[
+            const SizedBox(height: 14),
+            _RhythmDetail(
+              icon: Icons.flag_outlined,
+              label: countdownTitle ?? 'Minha prova',
+              value: countdownLabel,
+            ),
+          ],
+          const SizedBox(height: 18),
+          Text(
+            'Área de estudos',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text('$studyMinutesToday min / $dailyStudyGoalMinutes min hoje'),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(value: studyProgress, minHeight: 6),
+        ],
       ),
     );
   }
+
+  static String _countdownLabel(DateTime? date) {
+    if (date == null) return '';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date.year, date.month, date.day);
+    final days = target.difference(today).inDays;
+    if (days < 0) return 'A data já passou';
+    if (days == 0) return 'É hoje!';
+    return days == 1 ? 'Falta 1 dia' : 'Faltam $days dias';
+  }
+}
+
+class _RhythmDetail extends StatelessWidget {
+  const _RhythmDetail({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Icon(icon, color: color ?? Theme.of(context).colorScheme.primary),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: Theme.of(context).textTheme.labelLarge),
+            Text(
+              value,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
+class _TodayPlanCard extends StatelessWidget {
+  const _TodayPlanCard({required this.tasks});
+
+  final List<Task> tasks;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Planejar hoje',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            tasks.isEmpty
+                ? 'Você não tem tarefas pendentes para priorizar.'
+                : 'Estas são as 3 tarefas mais importantes agora.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          if (tasks.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            for (var index = 0; index < tasks.length; index++)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    CircleAvatar(radius: 12, child: Text('${index + 1}')),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        tasks[index].title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Icon(
+                      tasks[index].priority.style(context).icon,
+                      size: 18,
+                      color: tasks[index].priority.style(context).color,
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
+    ),
+  );
+}
+
+String _formatStudyDuration(Duration duration) {
+  final hours = duration.inHours;
+  final minutes = duration.inMinutes.remainder(60);
+  if (hours == 0) return '$minutes min';
+  return minutes == 0 ? '${hours}h' : '${hours}h ${minutes}min';
 }
 
 class _TodaySummary extends StatelessWidget {
@@ -935,6 +1181,7 @@ class _TaskSection extends StatelessWidget {
     required this.onTaskChanged,
     required this.onEditTask,
     required this.onDeleteTask,
+    required this.onRescheduleTask,
     this.emptyMessage,
     this.emptySupport,
     this.emptyIcon,
@@ -946,6 +1193,7 @@ class _TaskSection extends StatelessWidget {
   final void Function(Task task, bool isCompleted) onTaskChanged;
   final ValueChanged<Task> onEditTask;
   final ValueChanged<Task> onDeleteTask;
+  final ValueChanged<Task> onRescheduleTask;
   final String? emptyMessage;
   final String? emptySupport;
   final IconData? emptyIcon;
@@ -993,6 +1241,9 @@ class _TaskSection extends StatelessWidget {
                   onChanged: (isCompleted) => onTaskChanged(task, isCompleted),
                   onEdit: () => onEditTask(task),
                   onDelete: () => onDeleteTask(task),
+                  onReschedule: task.isOverdue
+                      ? () => onRescheduleTask(task)
+                      : null,
                 ),
               ),
         ],

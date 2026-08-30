@@ -62,6 +62,10 @@ void main() {
     expect(find.text('7 dias'), findsOneWidget);
     expect(find.text('30 dias'), findsOneWidget);
     expect(find.text('Tempo estudado'), findsOneWidget);
+    expect(find.text('Atividades'), findsOneWidget);
+    expect(find.text('Tarefas\nconcluídas'), findsOneWidget);
+    expect(find.text('Tarefas\natrasadas'), findsOneWidget);
+    expect(find.text('Concluídas\ncom atraso'), findsOneWidget);
     expect(find.text('Tempo por matéria'), findsOneWidget);
     expect(find.text('Física'), findsOneWidget);
 
@@ -143,7 +147,7 @@ class _NoopTaskStorage implements TaskStorage {
   Future<void> updateTask(Task task) async {}
 }
 
-class _FakeStudyStorage implements StudySessionStorage {
+class _FakeStudyStorage extends StudySessionStorage {
   @override
   Future<void> deleteSession(String id) async {}
 

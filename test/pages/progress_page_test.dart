@@ -133,7 +133,7 @@ void main() {
   });
 }
 
-class _NoopTaskStorage implements TaskStorage {
+class _NoopTaskStorage extends TaskStorage {
   @override
   Future<void> deleteTask(String id) async {}
 

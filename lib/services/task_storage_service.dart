@@ -3,7 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/task.dart';
 import 'task_storage.dart';
 
-class TaskStorageService implements TaskStorage {
+class TaskStorageService extends TaskStorage {
   TaskStorageService(this._box);
 
   static const String boxName = 'tasks';

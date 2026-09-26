@@ -26,6 +26,15 @@ class AppSettingsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Aplica as preferências vindas da conta sem carregar permissões do outro
+  /// aparelho. A permissão de notificações pertence a cada dispositivo.
+  Future<void> replaceFromCloud(AppSettings settings) async {
+    _settings = settings.copyWith(dailyReminderPermissionRequested: false);
+    await _storage.save(_settings);
+    notifyListeners();
+    await reconcileDailyReminder();
+  }
+
   Future<void> setThemeMode(ThemeMode mode) async {
     if (_settings.themeMode == mode) return;
     _settings = _settings.copyWith(themeMode: mode);

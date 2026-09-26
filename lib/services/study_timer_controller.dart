@@ -35,6 +35,32 @@ class StudyTimerController {
   DateTime? get sessionStartedAt => _sessionStartedAt;
   bool get isLongBreak => _isLongBreak;
 
+  /// Uma cópia serializável do cronômetro atual. Ela permite que uma sessão
+  /// continue de onde parou mesmo depois de trocar de tela ou fechar o app.
+  StudyTimerSnapshot get snapshot => StudyTimerSnapshot(
+    type: type,
+    phase: phase,
+    isRunning: isRunning,
+    sessionStartedAt: _sessionStartedAt,
+    runningSince: _runningSince,
+    elapsedBeforePause: _elapsedBeforePause,
+    completedFocusSessions: _completedFocusSessions,
+    isLongBreak: _isLongBreak,
+  );
+
+  /// Restaura uma sessão salva. Não restaura configurações do Pomodoro, pois
+  /// elas continuam vindo das preferências atuais da pessoa.
+  void restore(StudyTimerSnapshot value) {
+    type = value.type;
+    phase = value.phase;
+    isRunning = value.isRunning;
+    _sessionStartedAt = value.sessionStartedAt;
+    _runningSince = value.runningSince;
+    _elapsedBeforePause = value.elapsedBeforePause;
+    _completedFocusSessions = value.completedFocusSessions;
+    _isLongBreak = value.isLongBreak;
+  }
+
   Duration get elapsed => _elapsedBeforePause + _runningElapsed;
 
   Duration get _runningElapsed => isRunning && _runningSince != null
@@ -171,4 +197,120 @@ class StudyTimerResult {
   final DateTime endedAt;
   final Duration duration;
   final StudySessionType type;
+}
+
+/// Estado persistido do cronômetro. Os valores de data são ISO-8601 para que
+/// possam ser guardados tanto no Hive quanto em futuros backups.
+class StudyTimerSnapshot {
+  const StudyTimerSnapshot({
+    required this.type,
+    required this.phase,
+    required this.isRunning,
+    required this.sessionStartedAt,
+    required this.runningSince,
+    required this.elapsedBeforePause,
+    required this.completedFocusSessions,
+    required this.isLongBreak,
+  });
+
+  final StudySessionType type;
+  final StudyTimerPhase phase;
+  final bool isRunning;
+  final DateTime? sessionStartedAt;
+  final DateTime? runningSince;
+  final Duration elapsedBeforePause;
+  final int completedFocusSessions;
+  final bool isLongBreak;
+
+  Map<String, dynamic> toMap() => {
+    'type': type.name,
+    'phase': phase.name,
+    'isRunning': isRunning,
+    'sessionStartedAt': sessionStartedAt?.toIso8601String(),
+    'runningSince': runningSince?.toIso8601String(),
+    'elapsedMilliseconds': elapsedBeforePause.inMilliseconds,
+    'completedFocusSessions': completedFocusSessions,
+    'isLongBreak': isLongBreak,
+  };
+
+  factory StudyTimerSnapshot.fromMap(Map<String, dynamic> map) {
+    final type = _enumByName(StudySessionType.values, map['type']);
+    final phase = _enumByName(StudyTimerPhase.values, map['phase']);
+    final isRunning = map['isRunning'];
+    final elapsedMilliseconds = map['elapsedMilliseconds'];
+    final completedFocusSessions = map['completedFocusSessions'];
+    final isLongBreak = map['isLongBreak'];
+    if (type == null ||
+        phase == null ||
+        isRunning is! bool ||
+        elapsedMilliseconds is! num ||
+        elapsedMilliseconds.isNegative ||
+        completedFocusSessions is! num ||
+        completedFocusSessions.isNegative ||
+        isLongBreak is! bool) {
+      throw const FormatException('Cronômetro salvo inválido.');
+    }
+    return StudyTimerSnapshot(
+      type: type,
+      phase: phase,
+      isRunning: isRunning,
+      sessionStartedAt: _dateFromMap(map['sessionStartedAt']),
+      runningSince: _dateFromMap(map['runningSince']),
+      elapsedBeforePause: Duration(milliseconds: elapsedMilliseconds.toInt()),
+      completedFocusSessions: completedFocusSessions.toInt(),
+      isLongBreak: isLongBreak,
+    );
+  }
+
+  static T? _enumByName<T extends Enum>(Iterable<T> values, Object? value) {
+    if (value is! String) return null;
+    for (final item in values) {
+      if (item.name == value) return item;
+    }
+    return null;
+  }
+
+  static DateTime? _dateFromMap(Object? value) {
+    if (value == null) return null;
+    if (value is! String) throw const FormatException('Data inválida.');
+    return DateTime.parse(value);
+  }
+}
+
+/// Cronômetro em andamento junto dos dados que devem acompanhar a sessão ao
+/// ser salva (matéria, objetivo e anotações).
+class ActiveStudyTimer {
+  const ActiveStudyTimer({
+    required this.timer,
+    this.subject,
+    this.studyPlan,
+    this.notes,
+  });
+
+  final StudyTimerSnapshot timer;
+  final String? subject;
+  final String? studyPlan;
+  final String? notes;
+
+  Map<String, dynamic> toMap() => {
+    ...timer.toMap(),
+    'subject': subject,
+    'studyPlan': studyPlan,
+    'notes': notes,
+  };
+
+  factory ActiveStudyTimer.fromMap(Map<String, dynamic> map) =>
+      ActiveStudyTimer(
+        timer: StudyTimerSnapshot.fromMap(map),
+        subject: _optionalText(map['subject']),
+        studyPlan: _optionalText(map['studyPlan']),
+        notes: _optionalText(map['notes']),
+      );
+
+  static String? _optionalText(Object? value) {
+    if (value == null) return null;
+    if (value is! String) throw const FormatException('Texto inválido.');
+    final text = value.trim();
+    return text.isEmpty ? null : text;
+  }
 }

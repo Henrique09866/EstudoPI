@@ -66,6 +66,20 @@ void main() {
     expect(controller.hasActiveStudySession, isFalse);
   });
 
+  test('restaura um cronômetro livre em andamento de onde estava', () {
+    controller.selectType(StudySessionType.freeTimer);
+    controller.startOrResume();
+    now = now.add(const Duration(minutes: 12));
+
+    final saved = StudyTimerSnapshot.fromMap(controller.snapshot.toMap());
+    final restored = StudyTimerController(now: () => now)..restore(saved);
+    now = now.add(const Duration(minutes: 3));
+
+    expect(restored.type, StudySessionType.freeTimer);
+    expect(restored.isRunning, isTrue);
+    expect(restored.elapsed, const Duration(minutes: 15));
+  });
+
   test(
     'usa pausa longa e inicia a pausa automaticamente quando configurado',
     () {

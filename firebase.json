@@ -1,0 +1,1 @@
+{"firestore":{"rules":"firebase/firestore.rules"},"hosting":{"public":"build/web","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"**","destination":"/index.html"}]},"flutter":{"platforms":{"dart":{"lib/firebase_options.dart":{"projectId":"curujao-2d04f","configurations":{"web":"1:951321183390:web:5945f7af422f6eea88a78f"}}}}}}

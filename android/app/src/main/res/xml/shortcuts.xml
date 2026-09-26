@@ -1,0 +1,13 @@
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="start_pomodoro"
+        android:enabled="true"
+        android:icon="@drawable/ic_notification"
+        android:shortcutLongLabel="@string/shortcut_start_pomodoro_long"
+        android:shortcutShortLabel="@string/shortcut_start_pomodoro_short">
+        <intent
+            android:action="com.taskflow.app.START_POMODORO"
+            android:targetClass="com.taskflow.app.MainActivity"
+            android:targetPackage="com.taskflow.app" />
+    </shortcut>
+</shortcuts>

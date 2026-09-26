@@ -5,6 +5,7 @@ import '../models/task.dart';
 import '../services/progress_summary.dart';
 import '../services/study_session_storage.dart';
 import '../services/study_session_storage_service.dart';
+import 'mock_exams_page.dart';
 
 class ProgressPage extends StatefulWidget {
   const ProgressPage({
@@ -57,6 +58,14 @@ class _ProgressPageState extends State<ProgressPage> {
     }
   }
 
+  Future<void> _openMockExams() async {
+    final storage = widget.storage ?? StudySessionStorageService.instance();
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (context) => MockExamsPage(storage: storage)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final summary = _summaryService.calculate(
@@ -66,7 +75,17 @@ class _ProgressPageState extends State<ProgressPage> {
     );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Meu progresso')),
+      appBar: AppBar(
+        title: const Text('Meu progresso'),
+        actions: [
+          IconButton(
+            key: const ValueKey('open-mock-exams-button'),
+            tooltip: 'Abrir simulados',
+            onPressed: _openMockExams,
+            icon: const Icon(Icons.quiz_outlined),
+          ),
+        ],
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SafeArea(
@@ -74,7 +93,7 @@ class _ProgressPageState extends State<ProgressPage> {
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 760),
+                    constraints: const BoxConstraints(maxWidth: 1120),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -112,9 +131,34 @@ class _ProgressPageState extends State<ProgressPage> {
                         const SizedBox(height: 20),
                         _ProgressMetrics(summary: summary),
                         const SizedBox(height: 20),
-                        _TaskActivityChart(summary: summary),
-                        const SizedBox(height: 20),
-                        _CompletionCard(summary: summary),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final activity = _TaskActivityChart(
+                              summary: summary,
+                            );
+                            final completion = _CompletionCard(
+                              summary: summary,
+                            );
+                            if (constraints.maxWidth < 860) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  activity,
+                                  const SizedBox(height: 20),
+                                  completion,
+                                ],
+                              );
+                            }
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(flex: 3, child: activity),
+                                const SizedBox(width: 20),
+                                Expanded(flex: 2, child: completion),
+                              ],
+                            );
+                          },
+                        ),
                         if (summary.hasData) ...[
                           if (summary.studyDays > 0) ...[
                             const SizedBox(height: 20),
@@ -184,7 +228,8 @@ class _ProgressMetrics extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = (constraints.maxWidth - 12) / 2;
+        final columns = constraints.maxWidth >= 860 ? 3 : 2;
+        final width = (constraints.maxWidth - (12 * (columns - 1))) / columns;
         return Wrap(
           spacing: 12,
           runSpacing: 12,

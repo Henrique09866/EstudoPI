@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/study_session.dart';
@@ -12,12 +14,16 @@ import '../services/study_session_storage_service.dart';
 import '../services/study_session_summary.dart';
 import '../services/home_insights_service.dart';
 import '../services/app_settings_controller.dart';
+import '../services/app_shortcut_controller.dart';
+import '../services/account_sync_controller.dart';
+import '../services/android_study_widget_service.dart';
 import '../widgets/task_card.dart';
 import '../widgets/task_filter_sheet.dart';
 import 'calendar_page.dart';
 import 'progress_page.dart';
 import 'study_page.dart';
 import 'settings_page.dart';
+import 'account_page.dart';
 import 'task_form_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -28,6 +34,8 @@ class HomePage extends StatefulWidget {
     this.notifications,
     this.studyStorage,
     this.settingsController,
+    this.shortcutController,
+    this.accountController,
   });
 
   final List<Task>? initialTasks;
@@ -35,8 +43,10 @@ class HomePage extends StatefulWidget {
   final TaskNotificationScheduler? notifications;
   final StudySessionStorage? studyStorage;
   final AppSettingsController? settingsController;
+  final AppShortcutController? shortcutController;
+  final AccountSyncController? accountController;
 
-  static const double _desktopMaxWidth = 760;
+  static const double _desktopMaxWidth = 1180;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -51,6 +61,8 @@ class _HomePageState extends State<HomePage> {
   final _insightsService = const HomeInsightsService();
   final _changingTaskIds = <String>{};
   late List<Task> _tasks;
+  // Tarefas concluídas continuam salvas e podem ser consultadas pelo filtro,
+  // mas não aparecem na lista principal como se fossem uma cópia da tarefa.
   var _filters = const TaskFilters();
   var _isLoading = true;
   var _searchQuery = '';
@@ -58,6 +70,7 @@ class _HomePageState extends State<HomePage> {
   List<StudySession> _sessions = const [];
   var _dailyStudyGoalMinutes =
       StudySessionStorageService.defaultDailyGoalMinutes;
+  var _seenCloudDataVersion = 0;
 
   @override
   void initState() {
@@ -67,6 +80,10 @@ class _HomePageState extends State<HomePage> {
     _studyStorage = widget.studyStorage ?? _availableStudyStorage();
     _tasks = List.of(widget.initialTasks ?? const []);
     widget.settingsController?.addListener(_onSettingsChanged);
+    widget.shortcutController?.addListener(_onShortcutRequested);
+    widget.accountController?.addListener(_onAccountChanged);
+    _seenCloudDataVersion = widget.accountController?.dataVersion ?? 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onShortcutRequested());
 
     if (widget.initialTasks != null) {
       _isLoading = false;
@@ -81,6 +98,8 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     widget.settingsController?.removeListener(_onSettingsChanged);
+    widget.shortcutController?.removeListener(_onShortcutRequested);
+    widget.accountController?.removeListener(_onAccountChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -95,6 +114,8 @@ class _HomePageState extends State<HomePage> {
         _isLoading = false;
       });
       await _reconcileNotifications(tasks);
+      unawaited(_scheduleDailyStudySummary());
+      unawaited(_updateAndroidWidget());
     } catch (_) {
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -120,6 +141,7 @@ class _HomePageState extends State<HomePage> {
         _studyMinutesToday = duration.inMinutes;
         _dailyStudyGoalMinutes = results[1] as int;
       });
+      unawaited(_scheduleDailyStudySummary());
     } catch (_) {
       // A falha no resumo não deve impedir o gerenciamento de tarefas.
     }
@@ -157,6 +179,9 @@ class _HomePageState extends State<HomePage> {
             if (item.id == task.id) updatedTask else item,
         ];
       });
+      unawaited(_updateAndroidWidget());
+      unawaited(_syncAccount());
+      unawaited(_scheduleDailyStudySummary());
       if (!updatedTask.isCompleted) return;
 
       final nextTask = _recurrenceService.createNextOccurrence(updatedTask);
@@ -167,6 +192,8 @@ class _HomePageState extends State<HomePage> {
         await _scheduleNotification(nextTask);
         if (!mounted) return;
         setState(() => _tasks = [..._tasks, nextTask]);
+        unawaited(_updateAndroidWidget());
+        unawaited(_syncAccount());
       } catch (_) {
         _showStorageError(
           'Tarefa concluída, mas não foi possível criar a próxima.',
@@ -191,6 +218,9 @@ class _HomePageState extends State<HomePage> {
       await _scheduleNotification(task);
       if (!mounted) return;
       setState(() => _tasks = [..._tasks, task]);
+      unawaited(_updateAndroidWidget());
+      unawaited(_syncAccount());
+      unawaited(_scheduleDailyStudySummary());
     } catch (_) {
       _showStorageError('Não foi possível salvar a tarefa.');
     }
@@ -214,6 +244,9 @@ class _HomePageState extends State<HomePage> {
             if (item.id == editedTask.id) editedTask else item,
         ];
       });
+      unawaited(_updateAndroidWidget());
+      unawaited(_syncAccount());
+      unawaited(_scheduleDailyStudySummary());
     } catch (_) {
       _showStorageError('Não foi possível salvar a tarefa.');
     }
@@ -247,6 +280,9 @@ class _HomePageState extends State<HomePage> {
       setState(
         () => _tasks = _tasks.where((item) => item.id != task.id).toList(),
       );
+      unawaited(_updateAndroidWidget());
+      unawaited(_syncAccount());
+      unawaited(_scheduleDailyStudySummary());
     } catch (_) {
       _showStorageError('Não foi possível excluir a tarefa.');
     }
@@ -283,10 +319,13 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
-    if (mounted) await _loadTasks();
+    if (mounted) {
+      await _loadTasks();
+      unawaited(_syncAccount());
+    }
   }
 
-  Future<void> _openStudy() async {
+  Future<void> _openStudy({bool autoStartPomodoro = false}) async {
     final subjects =
         _tasks
             .map((task) => task.subject?.trim())
@@ -301,12 +340,18 @@ class _HomePageState extends State<HomePage> {
         builder: (context) => StudyPage(
           storage: _studyStorage,
           timerAlarms: NotificationService.instance,
+          timerStatusNotifier: NotificationService.instance,
+          revisionReminders: NotificationService.instance,
+          autoStartPomodoro: autoStartPomodoro,
           settings: widget.settingsController?.settings,
           subjects: subjects,
         ),
       ),
     );
-    if (mounted) await _loadStudySummary();
+    if (mounted) {
+      await _loadStudySummary();
+      unawaited(_syncAccount());
+    }
   }
 
   Future<void> _openProgress() async {
@@ -317,6 +362,7 @@ class _HomePageState extends State<HomePage> {
             ProgressPage(tasks: List.of(_tasks), storage: _studyStorage),
       ),
     );
+    if (mounted) unawaited(_syncAccount());
   }
 
   Future<void> _openSettings() async {
@@ -325,9 +371,25 @@ class _HomePageState extends State<HomePage> {
     await Navigator.push<void>(
       context,
       MaterialPageRoute(
-        builder: (context) => SettingsPage(controller: controller),
+        builder: (context) => SettingsPage(
+          controller: controller,
+          taskStorage: _storage,
+          studyStorage: _studyStorage,
+          accountController: widget.accountController,
+        ),
       ),
     );
+    if (mounted) unawaited(_syncAccount());
+  }
+
+  Future<void> _openAccount() async {
+    final controller = widget.accountController;
+    if (controller == null) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => AccountPage(controller: controller)),
+    );
+    if (mounted) unawaited(_syncAccount());
   }
 
   void _clearFilters() {
@@ -340,6 +402,35 @@ class _HomePageState extends State<HomePage> {
 
   void _onSettingsChanged() {
     if (mounted) setState(() {});
+    widget.accountController?.syncAfterLocalChange();
+  }
+
+  void _onAccountChanged() {
+    final controller = widget.accountController;
+    if (controller == null) return;
+    if (controller.dataVersion != _seenCloudDataVersion) {
+      _seenCloudDataVersion = controller.dataVersion;
+      unawaited(_reloadDataAfterCloudUpdate());
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _reloadDataAfterCloudUpdate() async {
+    await _loadTasks();
+    await _loadStudySummary();
+  }
+
+  Future<void> _syncAccount() async {
+    widget.accountController?.syncAfterLocalChange();
+  }
+
+  void _onShortcutRequested() {
+    final shortcutController = widget.shortcutController;
+    if (shortcutController == null ||
+        !shortcutController.consumeStartPomodoroRequest()) {
+      return;
+    }
+    unawaited(_openStudy(autoStartPomodoro: true));
   }
 
   Future<void> _rescheduleOverdueTask(Task task) async {
@@ -366,6 +457,9 @@ class _HomePageState extends State<HomePage> {
             if (current.id == task.id) rescheduled else current,
         ];
       });
+      unawaited(_updateAndroidWidget());
+      unawaited(_syncAccount());
+      unawaited(_scheduleDailyStudySummary());
       _showNotificationMessage('Tarefa reagendada para amanhã.');
     } catch (_) {
       _showStorageError('Não foi possível reagendar a tarefa.');
@@ -389,6 +483,33 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {
       _showNotificationMessage('Não foi possível atualizar os lembretes.');
     }
+  }
+
+  Future<void> _scheduleDailyStudySummary() async {
+    try {
+      final now = DateTime.now();
+      final completedTasks = _tasks
+          .where((task) => task.isCompleted && _isSameDay(task.dateTime, now))
+          .length;
+      final pendingTasks = _tasks
+          .where((task) => task.isPending && _isSameDay(task.dateTime, now))
+          .length;
+      await NotificationService.instance.scheduleDailyStudySummary(
+        completedTasks: completedTasks,
+        pendingTasks: pendingTasks,
+        studyMinutes: _studyMinutesToday,
+      );
+    } catch (_) {
+      // O resumo é complementar e não pode interromper a tela inicial.
+    }
+  }
+
+  Future<void> _updateAndroidWidget() async {
+    final pending = _tasks.where((task) => task.isPending).toList()
+      ..sort((first, second) => first.dateTime.compareTo(second.dateTime));
+    await AndroidStudyWidgetService.updateNextTask(
+      pending.isEmpty ? null : pending.first,
+    );
   }
 
   Future<void> _scheduleNotification(Task task) async {
@@ -486,6 +607,8 @@ class _HomePageState extends State<HomePage> {
                       upcomingTasks: upcomingTasks,
                       completedTasks: completedTasks,
                       completedToday: completedToday,
+                      showCompletedTasks:
+                          _filters.status == TaskStatusFilter.completed,
                       todayPendingCount: todayPendingCount,
                       overdueCount: overdueCount,
                       searchController: _searchController,
@@ -497,6 +620,9 @@ class _HomePageState extends State<HomePage> {
                       onOpenCalendar: _openCalendar,
                       onOpenStudy: _openStudy,
                       onOpenProgress: _openProgress,
+                      onOpenAccount: widget.accountController == null
+                          ? null
+                          : _openAccount,
                       onOpenSettings: _openSettings,
                       studyMinutesToday: _studyMinutesToday,
                       dailyStudyGoalMinutes: _dailyStudyGoalMinutes,
@@ -569,6 +695,7 @@ class _HomeContent extends StatelessWidget {
     required this.upcomingTasks,
     required this.completedTasks,
     required this.completedToday,
+    required this.showCompletedTasks,
     required this.todayPendingCount,
     required this.overdueCount,
     required this.searchController,
@@ -578,6 +705,7 @@ class _HomeContent extends StatelessWidget {
     required this.onOpenCalendar,
     required this.onOpenStudy,
     required this.onOpenProgress,
+    required this.onOpenAccount,
     required this.onOpenSettings,
     required this.studyMinutesToday,
     required this.dailyStudyGoalMinutes,
@@ -601,6 +729,7 @@ class _HomeContent extends StatelessWidget {
   final List<Task> upcomingTasks;
   final List<Task> completedTasks;
   final List<Task> completedToday;
+  final bool showCompletedTasks;
   final int todayPendingCount;
   final int overdueCount;
   final TextEditingController searchController;
@@ -610,6 +739,7 @@ class _HomeContent extends StatelessWidget {
   final VoidCallback onOpenCalendar;
   final VoidCallback onOpenStudy;
   final VoidCallback onOpenProgress;
+  final VoidCallback? onOpenAccount;
   final VoidCallback onOpenSettings;
   final int studyMinutesToday;
   final int dailyStudyGoalMinutes;
@@ -681,6 +811,13 @@ class _HomeContent extends StatelessWidget {
               onPressed: onOpenSettings,
               icon: const Icon(Icons.settings_outlined),
             ),
+            if (onOpenAccount != null)
+              IconButton(
+                key: const ValueKey('open-account-button'),
+                tooltip: 'Abrir conta e login',
+                onPressed: onOpenAccount,
+                icon: const Icon(Icons.account_circle_outlined),
+              ),
           ],
         ),
         const SizedBox(height: 28),
@@ -699,25 +836,58 @@ class _HomeContent extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 24),
-        _TodaySummary(
-          pendingCount: todayPendingCount,
-          completedCount: completedToday.length,
-          overdueCount: overdueCount,
-          totalCount: totalToday,
-        ),
-        if (showInsights) ...[
-          const SizedBox(height: 16),
-          _TodayPlanCard(tasks: todayPlan),
-        ],
-        const SizedBox(height: 12),
-        _StudyRhythmCard(
-          streak: streak,
-          summary: weeklySummary,
-          countdownTitle: countdownTitle,
-          countdownDate: countdownDate,
-          studyMinutesToday: studyMinutesToday,
-          dailyStudyGoalMinutes: dailyStudyGoalMinutes,
-          onOpenStudy: onOpenStudy,
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final summary = _TodaySummary(
+              pendingCount: todayPendingCount,
+              completedCount: completedToday.length,
+              overdueCount: overdueCount,
+              totalCount: totalToday,
+            );
+            final studyRhythm = _StudyRhythmCard(
+              streak: streak,
+              summary: weeklySummary,
+              countdownTitle: countdownTitle,
+              countdownDate: countdownDate,
+              studyMinutesToday: studyMinutesToday,
+              dailyStudyGoalMinutes: dailyStudyGoalMinutes,
+              onOpenStudy: onOpenStudy,
+            );
+            if (constraints.maxWidth < 860) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  summary,
+                  if (showInsights) ...[
+                    const SizedBox(height: 16),
+                    _TodayPlanCard(tasks: todayPlan),
+                  ],
+                  const SizedBox(height: 12),
+                  studyRhythm,
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 6,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      summary,
+                      if (showInsights) ...[
+                        const SizedBox(height: 16),
+                        _TodayPlanCard(tasks: todayPlan),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(flex: 5, child: studyRhythm),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 20),
         TextField(
@@ -760,54 +930,85 @@ class _HomeContent extends StatelessWidget {
           const _EmptyTaskList()
         else if (noResults)
           _NoResults(onClearFilters: onClearFilters)
-        else ...[
-          if (overdueTasks.isNotEmpty)
-            _TaskSection(
-              title: 'Atrasadas',
-              count: overdueTasks.length,
-              tasks: overdueTasks,
-              onTaskChanged: onTaskChanged,
-              onEditTask: onEditTask,
-              onDeleteTask: onDeleteTask,
-              onRescheduleTask: onRescheduleTask,
-            ),
-          _TaskSection(
-            title: 'Hoje',
-            count: todayTasks.length,
-            emptyMessage: 'Nenhuma tarefa para hoje',
-            emptySupport: 'Você está em dia 🎉',
-            emptyIcon: Icons.wb_sunny_outlined,
-            tasks: todayTasks,
-            onTaskChanged: onTaskChanged,
-            onEditTask: onEditTask,
-            onDeleteTask: onDeleteTask,
-            onRescheduleTask: onRescheduleTask,
+        else
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final overdue = _TaskSection(
+                title: 'Atrasadas',
+                count: overdueTasks.length,
+                tasks: overdueTasks,
+                onTaskChanged: onTaskChanged,
+                onEditTask: onEditTask,
+                onDeleteTask: onDeleteTask,
+                onRescheduleTask: onRescheduleTask,
+              );
+              final today = _TaskSection(
+                title: 'Hoje',
+                count: todayTasks.length,
+                emptyMessage: 'Nenhuma tarefa para hoje',
+                emptySupport: 'Você está em dia 🎉',
+                emptyIcon: Icons.wb_sunny_outlined,
+                tasks: todayTasks,
+                onTaskChanged: onTaskChanged,
+                onEditTask: onEditTask,
+                onDeleteTask: onDeleteTask,
+                onRescheduleTask: onRescheduleTask,
+              );
+              final upcoming = _TaskSection(
+                title: 'Próximas',
+                count: upcomingTasks.length,
+                emptyMessage: 'Nenhuma tarefa futura',
+                emptySupport: 'Planeje sua próxima sessão quando precisar.',
+                emptyIcon: Icons.event_available_outlined,
+                tasks: upcomingTasks,
+                onTaskChanged: onTaskChanged,
+                onEditTask: onEditTask,
+                onDeleteTask: onDeleteTask,
+                onRescheduleTask: onRescheduleTask,
+              );
+              final completed = _TaskSection(
+                title: 'Concluídas',
+                count: completedTasks.length,
+                emptyMessage: 'Nenhuma tarefa concluída',
+                emptySupport: 'Suas conquistas aparecerão aqui.',
+                emptyIcon: Icons.task_alt_rounded,
+                tasks: completedTasks,
+                onTaskChanged: onTaskChanged,
+                onEditTask: onEditTask,
+                onDeleteTask: onDeleteTask,
+                onRescheduleTask: onRescheduleTask,
+              );
+              if (constraints.maxWidth < 860) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (overdueTasks.isNotEmpty) overdue,
+                    today,
+                    upcoming,
+                    if (showCompletedTasks) completed,
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [if (overdueTasks.isNotEmpty) overdue, today],
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [upcoming, if (showCompletedTasks) completed],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
-          _TaskSection(
-            title: 'Próximas',
-            count: upcomingTasks.length,
-            emptyMessage: 'Nenhuma tarefa futura',
-            emptySupport: 'Planeje sua próxima sessão quando precisar.',
-            emptyIcon: Icons.event_available_outlined,
-            tasks: upcomingTasks,
-            onTaskChanged: onTaskChanged,
-            onEditTask: onEditTask,
-            onDeleteTask: onDeleteTask,
-            onRescheduleTask: onRescheduleTask,
-          ),
-          _TaskSection(
-            title: 'Concluídas',
-            count: completedTasks.length,
-            emptyMessage: 'Nenhuma tarefa concluída',
-            emptySupport: 'Suas conquistas aparecerão aqui.',
-            emptyIcon: Icons.task_alt_rounded,
-            tasks: completedTasks,
-            onTaskChanged: onTaskChanged,
-            onEditTask: onEditTask,
-            onDeleteTask: onDeleteTask,
-            onRescheduleTask: onRescheduleTask,
-          ),
-        ],
       ],
     );
   }

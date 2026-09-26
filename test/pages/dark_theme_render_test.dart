@@ -95,7 +95,7 @@ class _StudyStorage extends StudySessionStorage {
   Future<void> saveSession(StudySession session) async {}
 }
 
-class _TaskStorage implements TaskStorage {
+class _TaskStorage extends TaskStorage {
   @override
   Future<void> deleteTask(String id) async {}
 

@@ -156,6 +156,27 @@ void main() {
     expect(find.text('Sessões de hoje'), findsOneWidget);
   });
 
+  testWidgets('aba rápida inicia uma matéria no cronômetro livre', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildStudy());
+    await tester.pumpAndSettle();
+
+    await _tapVisible(tester, find.text('Rápido'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('quick-study-subject-field')),
+      'Física',
+    );
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('quick-study-play-button')),
+    );
+
+    expect(controller.type, StudySessionType.freeTimer);
+    expect(controller.isRunning, isTrue);
+  });
+
   testWidgets('salva o objetivo e alterna o gráfico entre pizza e barras', (
     tester,
   ) async {
@@ -224,6 +245,9 @@ void main() {
     await tester.pump();
 
     expect(timerAlarms.scheduledAt, [now.add(const Duration(minutes: 25))]);
+    expect(timerAlarms.kinds, [StudyTimerAlarmKind.focusCompleted]);
+    expect(timerAlarms.sounds, [isTrue]);
+    expect(timerAlarms.vibrations, [isTrue]);
     expect(
       find.byKey(const ValueKey('study-timer-alarm-time')),
       findsOneWidget,
@@ -474,6 +498,9 @@ class FakeStudyStorage extends StudySessionStorage {
 
 class FakeTimerAlarms implements StudyTimerAlarmScheduler {
   final scheduledAt = <DateTime>[];
+  final kinds = <StudyTimerAlarmKind>[];
+  final sounds = <bool>[];
+  final vibrations = <bool>[];
   var cancelCount = 0;
 
   @override
@@ -493,10 +520,13 @@ class FakeTimerAlarms implements StudyTimerAlarmScheduler {
     bool vibration = true,
   }) async {
     this.scheduledAt.add(scheduledAt);
+    kinds.add(kind);
+    sounds.add(sound);
+    vibrations.add(vibration);
   }
 }
 
-class _NoopTaskStorage implements TaskStorage {
+class _NoopTaskStorage extends TaskStorage {
   @override
   Future<void> deleteTask(String id) async {}
 

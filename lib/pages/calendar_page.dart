@@ -23,7 +23,7 @@ class CalendarPage extends StatefulWidget {
   final TaskNotificationScheduler? notifications;
   final DateTime? initialSelectedDate;
 
-  static const double _desktopMaxWidth = 760;
+  static const double _desktopMaxWidth = 1180;
 
   @override
   State<CalendarPage> createState() => _CalendarPageState();
@@ -260,46 +260,43 @@ class _CalendarPageState extends State<CalendarPage> {
                           },
                         ),
                         const SizedBox(height: 16),
-                        _MonthCalendar(
-                          displayedMonth: _displayedMonth,
-                          selectedDate: _selectedDate,
-                          tasks: _tasks,
-                          onSelectDate: (date) {
-                            setState(() => _selectedDate = _dateOnly(date));
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            final calendar = _MonthCalendar(
+                              displayedMonth: _displayedMonth,
+                              selectedDate: _selectedDate,
+                              tasks: _tasks,
+                              onSelectDate: (date) {
+                                setState(() => _selectedDate = _dateOnly(date));
+                              },
+                            );
+                            final selectedTasks = _SelectedDayTasks(
+                              selectedDate: _selectedDate,
+                              tasks: tasksForSelectedDate,
+                              onTaskChanged: _toggleTaskCompletion,
+                              onEdit: _editTask,
+                              onDelete: _confirmDeleteTask,
+                            );
+                            if (constraints.maxWidth < 860) {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  calendar,
+                                  const SizedBox(height: 28),
+                                  selectedTasks,
+                                ],
+                              );
+                            }
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(flex: 6, child: calendar),
+                                const SizedBox(width: 24),
+                                Expanded(flex: 5, child: selectedTasks),
+                              ],
+                            );
                           },
                         ),
-                        const SizedBox(height: 28),
-                        Text(
-                          _formatSelectedDate(_selectedDate),
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '${tasksForSelectedDate.length} ${tasksForSelectedDate.length == 1 ? 'tarefa' : 'tarefas'}',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                        const SizedBox(height: 14),
-                        if (tasksForSelectedDate.isEmpty)
-                          const _CalendarEmptyDay()
-                        else
-                          for (final task in tasksForSelectedDate)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: TaskCard(
-                                key: ValueKey('calendar-task-card-${task.id}'),
-                                task: task,
-                                onChanged: (isCompleted) =>
-                                    _toggleTaskCompletion(task, isCompleted),
-                                onEdit: () => _editTask(task),
-                                onDelete: () => _confirmDeleteTask(task),
-                              ),
-                            ),
                       ],
                     ),
                   ),
@@ -334,6 +331,57 @@ class _CalendarPageState extends State<CalendarPage> {
     ];
     return '${date.day} de ${months[date.month - 1]}';
   }
+}
+
+class _SelectedDayTasks extends StatelessWidget {
+  const _SelectedDayTasks({
+    required this.selectedDate,
+    required this.tasks,
+    required this.onTaskChanged,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final DateTime selectedDate;
+  final List<Task> tasks;
+  final void Function(Task task, bool isCompleted) onTaskChanged;
+  final ValueChanged<Task> onEdit;
+  final ValueChanged<Task> onDelete;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        _CalendarPageState._formatSelectedDate(selectedDate),
+        style: Theme.of(
+          context,
+        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        '${tasks.length} ${tasks.length == 1 ? 'tarefa' : 'tarefas'}',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+      const SizedBox(height: 14),
+      if (tasks.isEmpty)
+        const _CalendarEmptyDay()
+      else
+        for (final task in tasks)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: TaskCard(
+              key: ValueKey('calendar-task-card-${task.id}'),
+              task: task,
+              onChanged: (isCompleted) => onTaskChanged(task, isCompleted),
+              onEdit: () => onEdit(task),
+              onDelete: () => onDelete(task),
+            ),
+          ),
+    ],
+  );
 }
 
 class _MonthHeader extends StatelessWidget {

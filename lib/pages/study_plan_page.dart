@@ -127,8 +127,13 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       sessions: widget.sessions,
       goals: _goals,
     );
-    final planSuggestions = {...widget.suggestedPlans}
-      ..removeWhere((plan) => plan.trim().isEmpty);
+    final planSuggestions =
+        widget.suggestedPlans
+            .map((plan) => plan.trim())
+            .where((plan) => plan.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
     final subjectSuggestions = {...widget.suggestedSubjects}
       ..removeWhere((subject) => subject.trim().isEmpty);
 
@@ -141,7 +146,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 680),
+                    constraints: const BoxConstraints(maxWidth: 1040),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -179,19 +184,41 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
                                 ),
                                 if (planSuggestions.isNotEmpty) ...[
                                   const SizedBox(height: 8),
-                                  Wrap(
-                                    spacing: 6,
-                                    runSpacing: 4,
-                                    children: planSuggestions
-                                        .map(
-                                          (plan) => ActionChip(
-                                            label: Text(plan),
-                                            onPressed: () => setState(
-                                              () => _planController.text = plan,
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
+                                  ExpansionTile(
+                                    key: const ValueKey(
+                                      'weekly-goal-plan-suggestions',
+                                    ),
+                                    tilePadding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                    ),
+                                    title: const Text('Objetivos sugeridos'),
+                                    subtitle: const Text(
+                                      'ENEM, ITA, AFA, ESA e mais',
+                                    ),
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          left: 4,
+                                          right: 4,
+                                          bottom: 8,
+                                        ),
+                                        child: Wrap(
+                                          spacing: 6,
+                                          runSpacing: 4,
+                                          children: planSuggestions
+                                              .map(
+                                                (plan) => ActionChip(
+                                                  label: Text(plan),
+                                                  onPressed: () => setState(
+                                                    () => _planController.text =
+                                                        plan,
+                                                  ),
+                                                ),
+                                              )
+                                              .toList(),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ],
                                 const SizedBox(height: 16),

@@ -1,12 +1,26 @@
 import 'package:flutter/material.dart';
 
+import '../services/study_session_storage.dart';
+import '../services/task_storage.dart';
+import '../services/account_sync_controller.dart';
 import '../models/app_settings.dart';
 import '../services/app_settings_controller.dart';
+import 'account_page.dart';
+import 'backup_page.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.controller});
+  const SettingsPage({
+    super.key,
+    required this.controller,
+    this.taskStorage,
+    this.studyStorage,
+    this.accountController,
+  });
 
   final AppSettingsController controller;
+  final TaskStorage? taskStorage;
+  final StudySessionStorage? studyStorage;
+  final AccountSyncController? accountController;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -119,6 +133,33 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Future<void> _openBackup() async {
+    final taskStorage = widget.taskStorage;
+    final studyStorage = widget.studyStorage;
+    if (taskStorage == null || studyStorage == null) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => BackupPage(
+          settingsController: widget.controller,
+          taskStorage: taskStorage,
+          studyStorage: studyStorage,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAccount() async {
+    final controller = widget.accountController;
+    if (controller == null) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AccountPage(controller: controller),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = widget.controller.settings;
@@ -127,7 +168,7 @@ class _SettingsPageState extends State<SettingsPage> {
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
+            constraints: const BoxConstraints(maxWidth: 840),
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
               children: [
@@ -243,6 +284,14 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                         value: settings.dailyReminderEnabled,
                         onChanged: widget.controller.setDailyReminderEnabled,
+                      ),
+                      const Divider(height: 1),
+                      const ListTile(
+                        leading: Icon(Icons.summarize_outlined),
+                        title: Text('Resumo diário'),
+                        subtitle: Text(
+                          'Às 21h: tempo estudado, tarefas concluídas e pendentes.',
+                        ),
                       ),
                       const Divider(height: 1),
                       Padding(
@@ -407,6 +456,49 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
                 const SizedBox(height: 28),
+                if (widget.accountController != null ||
+                    (widget.taskStorage != null &&
+                        widget.studyStorage != null)) ...[
+                  _SectionLabel('DADOS'),
+                  if (widget.accountController != null) ...[
+                    Card(
+                      child: ListTile(
+                        key: const ValueKey('settings-account'),
+                        leading: Icon(
+                          widget.accountController!.isSignedIn
+                              ? Icons.cloud_done_outlined
+                              : Icons.account_circle_outlined,
+                        ),
+                        title: const Text('Conta e sincronização'),
+                        subtitle: Text(
+                          widget.accountController!.isSignedIn
+                              ? widget.accountController!.email ??
+                                    'Conta conectada'
+                              : widget.accountController!.isAvailable
+                              ? 'Entre para usar seus dados no celular e tablet.'
+                              : 'Configure a nuvem para ativar a sincronização.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: _openAccount,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (widget.taskStorage != null && widget.studyStorage != null)
+                    Card(
+                      child: ListTile(
+                        key: const ValueKey('settings-backup'),
+                        leading: const Icon(Icons.backup_outlined),
+                        title: const Text('Backup e exportação'),
+                        subtitle: const Text(
+                          'Backup local, planilha CSV e relatório PDF.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: _openBackup,
+                      ),
+                    ),
+                  const SizedBox(height: 28),
+                ],
                 _SectionLabel('CONTAGEM REGRESSIVA'),
                 Card(
                   child: ListTile(

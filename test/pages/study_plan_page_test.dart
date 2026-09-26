@@ -55,6 +55,41 @@ void main() {
     expect(storage.goals.single.targetMinutes, 120);
     expect(find.text('1h de 2h'), findsOneWidget);
   });
+
+  testWidgets('mostra os objetivos de concurso em uma lista expansível', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light,
+        home: StudyPlanPage(
+          storage: _GoalStorage(),
+          sessions: const [],
+          suggestedPlans: const ['ENEM', 'ITA', 'AFA', 'ESA'],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('weekly-goal-plan-suggestions')),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(ActionChip, 'ITA'), findsNothing);
+
+    await tester.tap(
+      find.byKey(const ValueKey('weekly-goal-plan-suggestions')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(ActionChip, 'ITA'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(ActionChip, 'ITA'));
+    await tester.pump();
+    final planField = tester.widget<TextField>(
+      find.byKey(const ValueKey('weekly-goal-plan-field')),
+    );
+    expect(planField.controller!.text, 'ITA');
+  });
 }
 
 class _GoalStorage extends StudySessionStorage {

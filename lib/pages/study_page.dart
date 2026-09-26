@@ -9,12 +9,14 @@ import '../models/study_session.dart';
 import '../models/study_weekly_goal.dart';
 import '../services/study_plan_progress.dart';
 import '../services/study_revision_planner.dart';
+import '../services/study_revision_reminder_scheduler.dart';
 import '../services/study_session_storage.dart';
 import '../services/study_session_storage_service.dart';
 import '../services/study_session_summary.dart';
 import '../services/study_time_analytics.dart';
 import '../services/study_timer_alarm_scheduler.dart';
 import '../services/study_timer_controller.dart';
+import '../services/weekly_study_plan_service.dart';
 import '../widgets/study_time_chart.dart';
 import 'study_cycle_history_page.dart';
 import 'study_plan_page.dart';
@@ -25,6 +27,9 @@ class StudyPage extends StatefulWidget {
     this.storage,
     this.timerController,
     this.timerAlarms,
+    this.timerStatusNotifier,
+    this.revisionReminders,
+    this.autoStartPomodoro = false,
     this.settings,
     this.subjects = const [],
   });
@@ -32,6 +37,9 @@ class StudyPage extends StatefulWidget {
   final StudySessionStorage? storage;
   final StudyTimerController? timerController;
   final StudyTimerAlarmScheduler? timerAlarms;
+  final StudyTimerStatusNotifier? timerStatusNotifier;
+  final StudyRevisionReminderScheduler? revisionReminders;
+  final bool autoStartPomodoro;
   final AppSettings? settings;
   final List<String> subjects;
 
@@ -47,25 +55,44 @@ class _StudyPageState extends State<StudyPage> {
   static const _defaultStudyPlans = [
     _generalPlan,
     'ENEM',
+    'FUVEST',
+    'UNICAMP',
+    'ITA',
+    'IME',
+    'AFA',
     'EsPCEx',
+    'ESA',
     'EFOMM',
     'EEAR',
+    'EPCAR',
+    'Colégio Naval',
     'Concurso público',
+    'Polícia Militar',
+    'Polícia Civil',
+    'Corpo de Bombeiros',
+    'PRF',
+    'PF',
+    'Receita Federal',
+    'Tribunais',
   ];
 
   late final StudySessionStorage _storage;
   late final StudyTimerController _timer;
   late final TextEditingController _subjectController;
+  late final TextEditingController _quickSubjectController;
   late final TextEditingController _notesController;
   final _studyPlanFieldKey = GlobalKey<FormFieldState<String>>();
   final _planProgressService = const StudyPlanProgressService();
+  final _weeklyPlanService = const WeeklyStudyPlanService();
   final _revisionPlanner = const StudyRevisionPlanner();
   Timer? _uiTimer;
+  int? _lastTimerNotificationMinute;
   List<StudySession> _sessions = const [];
   List<StudyRevision> _revisions = const [];
   List<StudyWeeklyGoal> _weeklyGoals = const [];
   List<StudyCycleSubject> _cycleSubjects = const [];
   List<StudyCycleCheckIn> _cycleCheckIns = const [];
+  List<String> _quickSubjects = const [];
   int _dailyGoalMinutes = StudySessionStorageService.defaultDailyGoalMinutes;
   String? _activeSubject;
   String? _activeStudyPlan;
@@ -96,28 +123,35 @@ class _StudyPageState extends State<StudyPage> {
           autoStartBreak: settings?.pomodoroAutoStartBreak ?? false,
         );
     _subjectController = TextEditingController();
+    _quickSubjectController = TextEditingController();
     _notesController = TextEditingController();
     _uiTimer = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
     _loadStudyData();
+    if (widget.autoStartPomodoro) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _startOrResume());
+    }
   }
 
   @override
   void dispose() {
     _uiTimer?.cancel();
     _subjectController.dispose();
+    _quickSubjectController.dispose();
     _notesController.dispose();
     super.dispose();
   }
 
   Future<void> _loadStudyData() async {
     try {
-      final results = await Future.wait<Object>([
+      final results = await Future.wait<Object?>([
         _storage.getSessions(),
         _storage.getDailyGoalMinutes(),
         _storage.getWeeklyGoals(),
         _storage.getRevisions(),
         _storage.getCycleSubjects(),
         _storage.getCycleCheckIns(),
+        _storage.getQuickSubjects(),
+        _storage.getActiveStudyTimer(),
       ]);
       if (!mounted) return;
       setState(() {
@@ -127,8 +161,23 @@ class _StudyPageState extends State<StudyPage> {
         _revisions = results[3] as List<StudyRevision>;
         _cycleSubjects = results[4] as List<StudyCycleSubject>;
         _cycleCheckIns = results[5] as List<StudyCycleCheckIn>;
+        _quickSubjects = results[6] as List<String>;
+        final activeTimer = results[7] as ActiveStudyTimer?;
+        if (activeTimer != null) {
+          _timer.restore(activeTimer.timer);
+          _activeSubject = activeTimer.subject;
+          _activeStudyPlan = activeTimer.studyPlan;
+          _activeNotes = activeTimer.notes;
+          _subjectController.text = activeTimer.subject ?? '';
+          _quickSubjectController.text = activeTimer.subject ?? '';
+          _notesController.text = activeTimer.notes ?? '';
+        }
         _isLoading = false;
       });
+      if (_timer.isRunning) {
+        unawaited(_scheduleTimerAlarm());
+        unawaited(_updateTimerNotification(force: true));
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() => _isLoading = false);
@@ -146,16 +195,26 @@ class _StudyPageState extends State<StudyPage> {
       unawaited(_saveTimerResult(result, automatic: true));
       if (_timer.isRunning) {
         setState(() {});
+        unawaited(_persistActiveTimer());
         unawaited(_scheduleTimerAlarm());
+        unawaited(_updateTimerNotification(force: true));
+      } else {
+        unawaited(_clearActiveTimer());
+        unawaited(_cancelTimerNotification());
       }
     } else if (event == StudyTimerEvent.breakCompleted) {
+      unawaited(_persistActiveTimer());
+      unawaited(_cancelTimerNotification());
       _showMessage('Pausa concluída. Pronto para o próximo foco?');
+    } else {
+      unawaited(_updateTimerNotification());
     }
   }
 
   void _selectMode(StudySessionType type) {
     if (_timer.hasActiveStudySession) return;
     setState(() => _timer.selectType(type));
+    unawaited(_clearActiveTimer());
   }
 
   void _startOrResume() {
@@ -168,18 +227,68 @@ class _StudyPageState extends State<StudyPage> {
       _activeNotes = _normalizedNotes;
     }
     setState(_timer.startOrResume);
+    unawaited(_persistActiveTimer());
     unawaited(_scheduleTimerAlarm());
+    unawaited(_updateTimerNotification(force: true));
+  }
+
+  void _startQuickTimer() {
+    final subject = _quickSubjectController.text.trim();
+    if (subject.isNotEmpty) unawaited(_saveQuickSubject(subject));
+    if (!_timer.hasActiveStudySession && !_timer.isRunning) {
+      setState(() {
+        _timer.selectType(StudySessionType.freeTimer);
+        _selectedStudyPlan = _generalPlan;
+        _subjectController.text = subject;
+        _notesController.clear();
+      });
+    }
+    _startOrResume();
+  }
+
+  Future<void> _saveQuickSubject(String subject) async {
+    final normalized = subject.trim();
+    if (normalized.isEmpty) return;
+    try {
+      await _storage.saveQuickSubject(normalized);
+      if (!mounted) return;
+      setState(() {
+        _quickSubjects =
+            {
+              ..._quickSubjects.where(
+                (current) => current.toLowerCase() != normalized.toLowerCase(),
+              ),
+              normalized,
+            }.toList()..sort(
+              (first, second) =>
+                  first.toLowerCase().compareTo(second.toLowerCase()),
+            );
+      });
+    } catch (_) {
+      // O cronômetro continua funcionando mesmo sem salvar o atalho.
+    }
   }
 
   void _pause() {
     setState(_timer.pause);
+    unawaited(_persistActiveTimer());
     unawaited(_cancelTimerAlarm());
+    unawaited(_cancelTimerNotification());
+  }
+
+  void _skipBreak() {
+    setState(_timer.skipBreak);
+    unawaited(_persistActiveTimer());
+    unawaited(_cancelTimerAlarm());
+    unawaited(_cancelTimerNotification());
   }
 
   Future<void> _finishStudy() async {
     if (!_timer.hasActiveStudySession) return;
     await _cancelTimerAlarm();
+    await _cancelTimerNotification();
     await _saveTimerResult(_timer.finishStudy());
+    await _clearActiveTimer();
   }
 
   Future<void> _scheduleTimerAlarm() async {
@@ -213,6 +322,62 @@ class _StudyPageState extends State<StudyPage> {
       await widget.timerAlarms?.cancelStudyTimerAlarm();
     } catch (_) {
       // Não há ação adicional necessária: o cronômetro local segue correto.
+    }
+  }
+
+  Future<void> _persistActiveTimer() async {
+    if (!_timer.hasActiveStudySession && !_timer.isRunning) {
+      await _clearActiveTimer();
+      return;
+    }
+    try {
+      await _storage.saveActiveStudyTimer(
+        ActiveStudyTimer(
+          timer: _timer.snapshot,
+          subject: _activeSubject,
+          studyPlan: _activeStudyPlan,
+          notes: _activeNotes,
+        ),
+      );
+    } catch (_) {
+      // O cronômetro continua utilizável mesmo se o armazenamento falhar.
+    }
+  }
+
+  Future<void> _clearActiveTimer() async {
+    try {
+      await _storage.clearActiveStudyTimer();
+    } catch (_) {
+      // Não interrompe a sessão atual se uma limpeza antiga falhar.
+    }
+  }
+
+  Future<void> _updateTimerNotification({bool force = false}) async {
+    if (!_timer.isRunning) return;
+    final elapsedMinutes = _timer.elapsed.inMinutes;
+    if (!force && elapsedMinutes == _lastTimerNotificationMinute) return;
+    _lastTimerNotificationMinute = elapsedMinutes;
+    try {
+      await widget.timerStatusNotifier?.showStudyTimerStatus(
+        elapsed: _timer.elapsed,
+        isPomodoro: _timer.type == StudySessionType.pomodoro,
+        isBreak: _timer.phase == StudyTimerPhase.breakTime,
+        remaining: _timer.type == StudySessionType.pomodoro
+            ? _timer.displayedDuration
+            : null,
+        subject: _activeSubject,
+      );
+    } catch (_) {
+      // Notificações são complementares: a contagem não pode depender delas.
+    }
+  }
+
+  Future<void> _cancelTimerNotification() async {
+    _lastTimerNotificationMinute = null;
+    try {
+      await widget.timerStatusNotifier?.cancelStudyTimerStatus();
+    } catch (_) {
+      // Não há ação adicional necessária caso o sistema bloqueie o aviso.
     }
   }
 
@@ -254,6 +419,19 @@ class _StudyPageState extends State<StudyPage> {
         );
       } catch (_) {
         revisionsSaved = false;
+      }
+      if (revisionsSaved) {
+        final reminders = widget.revisionReminders;
+        if (reminders != null) {
+          try {
+            await Future.wait(
+              plannedRevisions.map(reminders.scheduleStudyRevisionReminder),
+            );
+          } catch (_) {
+            // As revisões foram salvas e continuam visíveis mesmo se o
+            // sistema impedir o lembrete local.
+          }
+        }
       }
       if (!mounted) return;
       setState(() {
@@ -385,6 +563,9 @@ class _StudyPageState extends State<StudyPage> {
     final completedRevision = revision.copyWith(completedAt: DateTime.now());
     try {
       await _storage.saveRevision(completedRevision);
+      await widget.revisionReminders?.cancelStudyRevisionReminder(
+        completedRevision.id,
+      );
       if (!mounted) return;
       setState(
         () => _revisions = [
@@ -549,7 +730,10 @@ class _StudyPageState extends State<StudyPage> {
       ),
     );
     if (shouldLeave == true && mounted) {
+      await _cancelTimerAlarm();
+      await _cancelTimerNotification();
       await _saveTimerResult(_timer.finishStudy());
+      await _clearActiveTimer();
       if (!mounted) return;
       Navigator.pop(context);
     }
@@ -575,6 +759,7 @@ class _StudyPageState extends State<StudyPage> {
   List<String> get _subjectSuggestions {
     final subjects = <String>{
       ...widget.subjects.map((subject) => subject.trim()),
+      ..._quickSubjects,
       ..._sessions
           .map((session) => session.subject?.trim())
           .whereType<String>(),
@@ -635,7 +820,7 @@ class _StudyPageState extends State<StudyPage> {
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
+          constraints: const BoxConstraints(maxWidth: 1120),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: children,
@@ -674,6 +859,10 @@ class _StudyPageState extends State<StudyPage> {
       sessions: _sessions,
       goals: _weeklyGoals,
     );
+    final todayRecommendations = _weeklyPlanService.recommendationsForToday(
+      sessions: _sessions,
+      goals: _weeklyGoals,
+    );
     final pendingRevisions = _revisionPlanner.pendingForDay(
       _revisions,
       DateTime.now(),
@@ -706,7 +895,7 @@ class _StudyPageState extends State<StudyPage> {
     final hasActive = _timer.hasActiveStudySession;
 
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: PopScope(
         canPop: !hasActive,
         onPopInvokedWithResult: (didPop, _) {
@@ -716,9 +905,11 @@ class _StudyPageState extends State<StudyPage> {
           appBar: AppBar(
             title: const Text('Área de estudos'),
             bottom: const TabBar(
+              isScrollable: true,
               tabs: [
                 Tab(icon: Icon(Icons.timer_outlined), text: 'Sessão'),
                 Tab(icon: Icon(Icons.insights_outlined), text: 'Painel'),
+                Tab(icon: Icon(Icons.play_circle_outline), text: 'Rápido'),
                 Tab(icon: Icon(Icons.repeat_rounded), text: 'Revisões'),
                 Tab(icon: Icon(Icons.grid_view_rounded), text: 'Ciclo'),
               ],
@@ -805,8 +996,15 @@ class _StudyPageState extends State<StudyPage> {
                         onStartOrResume: _startOrResume,
                         onPause: _pause,
                         onFinish: _finishStudy,
-                        onSkipBreak: () => setState(_timer.skipBreak),
+                        onSkipBreak: _skipBreak,
                       ),
+                      if (todayRecommendations.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+                        _TodayStudyPlanCard(
+                          recommendations: todayRecommendations,
+                          onOpenPlan: _openStudyPlan,
+                        ),
+                      ],
                       const SizedBox(height: 20),
                       _DailyGoalCard(
                         total: totalToday,
@@ -872,6 +1070,22 @@ class _StudyPageState extends State<StudyPage> {
                       ],
                     ]),
                     _scrollableTab([
+                      _QuickTimerCard(
+                        controller: _quickSubjectController,
+                        suggestions: _subjectSuggestions,
+                        activeSubject: _activeSubject,
+                        isRunning: _timer.isRunning,
+                        hasActiveStudy: hasActive,
+                        duration: _timer.elapsed,
+                        onStartOrResume: _startQuickTimer,
+                        onPause: _pause,
+                        onFinish: _finishStudy,
+                        onSelectSubject: (subject) => setState(
+                          () => _quickSubjectController.text = subject,
+                        ),
+                      ),
+                    ]),
+                    _scrollableTab([
                       Text(
                         'Revisar no intervalo certo ajuda a transformar estudo em memória.',
                         style: Theme.of(context).textTheme.titleMedium
@@ -914,6 +1128,156 @@ class _StudyPageState extends State<StudyPage> {
                     ]),
                   ],
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Entrada enxuta para começar uma matéria sem configurar objetivo ou notas.
+/// Se existir uma sessão pausada, o Play a continua em vez de criar outra.
+class _QuickTimerCard extends StatelessWidget {
+  const _QuickTimerCard({
+    required this.controller,
+    required this.suggestions,
+    required this.activeSubject,
+    required this.isRunning,
+    required this.hasActiveStudy,
+    required this.duration,
+    required this.onStartOrResume,
+    required this.onPause,
+    required this.onFinish,
+    required this.onSelectSubject,
+  });
+
+  final TextEditingController controller;
+  final List<String> suggestions;
+  final String? activeSubject;
+  final bool isRunning;
+  final bool hasActiveStudy;
+  final Duration duration;
+  final VoidCallback onStartOrResume;
+  final VoidCallback onPause;
+  final VoidCallback onFinish;
+  final ValueChanged<String> onSelectSubject;
+
+  @override
+  Widget build(BuildContext context) {
+    final subject = activeSubject?.trim();
+    final hasNamedActiveStudy = subject != null && subject.isNotEmpty;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.play_circle_fill_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Cronômetro rápido',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              hasActiveStudy
+                  ? hasNamedActiveStudy
+                        ? 'Você está estudando $subject. Use Play para continuar de onde parou.'
+                        : 'Há uma sessão em andamento. Use Play para continuar de onde parou.'
+                  : 'Digite a matéria, por exemplo Física, e aperte Play. Ela ficará salva abaixo como atalho e o cronômetro continua mesmo ao fechar o app.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              key: const ValueKey('quick-study-subject-field'),
+              controller: controller,
+              enabled: !hasActiveStudy,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Matéria',
+                hintText: 'Ex.: Física',
+                prefixIcon: Icon(Icons.menu_book_outlined),
+              ),
+              onSubmitted: (_) => onStartOrResume(),
+            ),
+            if (!hasActiveStudy && suggestions.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: suggestions
+                    .map(
+                      (item) => ActionChip(
+                        label: Text(item),
+                        onPressed: () => onSelectSubject(item),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ],
+            if (hasActiveStudy) ...[
+              const SizedBox(height: 20),
+              Text(
+                _formatTimer(duration, withHours: true),
+                key: const ValueKey('quick-study-timer-display'),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+            const SizedBox(height: 20),
+            if (isRunning)
+              FilledButton.icon(
+                key: const ValueKey('quick-study-pause-button'),
+                onPressed: onPause,
+                icon: const Icon(Icons.pause_rounded),
+                label: const Text('Pausar'),
+              )
+            else
+              FilledButton.icon(
+                key: const ValueKey('quick-study-play-button'),
+                onPressed: onStartOrResume,
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: Text(hasActiveStudy ? 'Continuar' : 'Play'),
+              ),
+            if (hasActiveStudy) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                onPressed: onFinish,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: const Text('Finalizar sessão'),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.notifications_active_outlined, size: 18),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '🔔 Aviso com o tempo estudado ativo durante a sessão',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -1910,6 +2274,26 @@ class _TimerPanel extends StatelessWidget {
                 ),
               ),
             ],
+            if (isRunning) ...[
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.notifications_active_outlined,
+                    size: 18,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '🔔 Aviso com o tempo em andamento ativo',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 24),
             if (isRunning)
               FilledButton.icon(
@@ -1952,6 +2336,94 @@ class _TimerPanel extends StatelessWidget {
                 label: const Text('Finalizar'),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodayStudyPlanCard extends StatelessWidget {
+  const _TodayStudyPlanCard({
+    required this.recommendations,
+    required this.onOpenPlan,
+  });
+
+  final List<DailyStudyRecommendation> recommendations;
+  final VoidCallback onOpenPlan;
+
+  @override
+  Widget build(BuildContext context) {
+    final preview = recommendations.take(3).toList();
+    final totalMinutes = recommendations.fold<int>(
+      0,
+      (total, item) => total + item.recommendedMinutes,
+    );
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.route_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Plano de hoje',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: onOpenPlan,
+                  child: const Text('Ver plano'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Reserve cerca de $totalMinutes min para manter suas metas da semana em dia.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 14),
+            for (final recommendation in preview)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.menu_book_outlined, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        [
+                          recommendation.subject,
+                          if (recommendation.studyPlan != null)
+                            recommendation.studyPlan!,
+                        ].join(' · '),
+                      ),
+                    ),
+                    Text(
+                      '${recommendation.recommendedMinutes} min',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (recommendations.length > preview.length)
+              Text(
+                '+ ${recommendations.length - preview.length} matéria(s) no plano',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
           ],
         ),
       ),

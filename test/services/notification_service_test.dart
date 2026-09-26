@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:taskflow/models/study_revision.dart';
 import 'package:taskflow/models/task.dart';
 import 'package:taskflow/services/notification_service.dart';
 import 'package:taskflow/services/task_notification_scheduler.dart';
@@ -32,6 +33,10 @@ void main() {
 
       expect(firstId, secondId);
       expect(firstId, isPositive);
+      expect(
+        NotificationService.tenMinuteNotificationIdForTaskId('task-123'),
+        isNot(firstId),
+      );
     });
 
     test('cálculo de lembrete no horário', () {
@@ -84,6 +89,10 @@ void main() {
       );
 
       expect(NotificationService.notificationDateFor(task, now: now), isNull);
+      expect(
+        NotificationService.shouldScheduleTaskNotification(task, now: now),
+        isTrue,
+      );
     });
 
     test('tarefa concluída não é agendada', () {
@@ -92,6 +101,23 @@ void main() {
       expect(
         NotificationService.shouldScheduleTaskNotification(task, now: now),
         isFalse,
+      );
+    });
+
+    test('calcula o lembrete de revisão para 8h', () {
+      final revision = StudyRevision(
+        id: 'revision-1',
+        subject: 'Física',
+        scheduledFor: DateTime(2026, 8, 22),
+      );
+
+      expect(
+        NotificationService.revisionReminderDateFor(revision, now: now),
+        DateTime(2026, 8, 22, 8),
+      );
+      expect(
+        NotificationService.notificationIdForRevisionId(revision.id),
+        isNot(NotificationService.notificationIdForTaskId(revision.id)),
       );
     });
 

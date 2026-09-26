@@ -109,6 +109,17 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> showCompletedTasks(WidgetTester tester) async {
+    await tapVisible(tester, find.byKey(const ValueKey('filter-button')));
+    await tapVisible(tester, find.byKey(const ValueKey('filter-status-field')));
+    await tester.tap(find.text('Concluídas').last);
+    await tester.pumpAndSettle();
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('apply-filters-button')),
+    );
+  }
+
   testWidgets('Home carrega tarefas do serviço', (tester) async {
     await pumpLoadedHome(tester, storage: FakeTaskStorage(tasksFixture()));
 
@@ -118,6 +129,8 @@ void main() {
     expect(find.text('1 de 2 concluídas'), findsOneWidget);
     expect(find.text('Tarefa de hoje'), findsOneWidget);
     expect(find.text('Tarefa futura'), findsOneWidget);
+    expect(find.text('Tarefa concluída'), findsNothing);
+    await showCompletedTasks(tester);
     expect(find.text('Tarefa concluída'), findsOneWidget);
   });
 
@@ -432,6 +445,7 @@ void main() {
     expect(storage.tasks.single.isCompleted, isTrue);
     expect(storage.tasks.single.completedAt, isNotNull);
     expect(notifications.cancelledTaskIds, ['today-1']);
+    expect(find.text('Tarefa de hoje'), findsNothing);
   });
 
   testWidgets('desmarcar uma tarefa concluída persiste status', (tester) async {
@@ -450,6 +464,8 @@ void main() {
       notifications: notifications,
     );
     notifications.clear();
+
+    await showCompletedTasks(tester);
 
     final completedTaskCheckbox = find.byType(Checkbox).last;
 
@@ -484,6 +500,8 @@ void main() {
       notifications: notifications,
     );
     notifications.clear();
+
+    await showCompletedTasks(tester);
 
     await tapVisible(tester, find.byType(Checkbox).first);
     await tester.pump();
@@ -1021,7 +1039,7 @@ void main() {
   });
 }
 
-class FakeTaskStorage implements TaskStorage {
+class FakeTaskStorage extends TaskStorage {
   FakeTaskStorage([List<Task>? initialTasks])
     : tasks = List.of(initialTasks ?? []);
 

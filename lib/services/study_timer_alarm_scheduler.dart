@@ -18,3 +18,17 @@ abstract class StudyTimerAlarmScheduler {
 
   Future<void> cancelStudyTimerAlarm();
 }
+
+/// Mostra o andamento da sessão no sistema. Diferente do alarme, esse aviso
+/// também funciona para o cronômetro livre, que não tem hora de término.
+abstract class StudyTimerStatusNotifier {
+  Future<void> showStudyTimerStatus({
+    required Duration elapsed,
+    required bool isPomodoro,
+    required bool isBreak,
+    required Duration? remaining,
+    String? subject,
+  });
+
+  Future<void> cancelStudyTimerStatus();
+}
